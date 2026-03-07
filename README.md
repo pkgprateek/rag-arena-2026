@@ -11,7 +11,7 @@ This document serves as the single source of truth for the entire RAG Arena 2026
 
 ### Goals (The "Why")
 - **Structural Differentiation**: Showcase that better AI relies on better data architecture (parsing, hybrid search, reranking), not just better prompts.
-- **Enterprise Readiness**: The application itself must be Enterprise-grade (secure, fast, telemetry-enabled, deterministic builds).
+- **Enterprise Readiness**: The application itself must be Enterprise-grade (secure, fast, deterministic builds).
 - **Fast Local Deployment**: 1-click Docker orchestration with no global system dependencies (Python, C++ bindings, etc.) polluting the developer's host machine.
 
 ### Non-Goals (What we are explicitly NOT doing)
@@ -75,17 +75,7 @@ The backend implements rigorous OWASP LLM 2025 standard mitigations:
 
 ---
 
-## 📈 5. Data Workflows & Feedback Loops (`/data`)
-
-No enterprise AI system is complete without observing its failures. We mandate data contracts via Pydantic (`app/models.py`).
-
-1. **Event Logs**: Every RAG trace computes the inference ms, total token usage, citations retrieved, and exact LLM evaluations.
-2. **Feedback Endpoints**: The UI captures Thumbs Up / Thumbs Down / Copy / Edit events and sends them back via the `POST /feedback` endpoint. 
-3. **Asynchronous Push**: To keep the web requests lightning fast, data is pipelined into Redis Streams (`xadd "telemetry:feedback_events"`) rather than blocking the user's connection waiting on an analytical database insert. This enables future ingestion by Snowflake / Redshift.
-
----
-
-## 🚀 6. Operations & Deployment (`/ship`)
+## 🚀 5. Operations & Deployment (`/ship`)
 
 ### Running Locally / CI-CD
 
