@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 interface UIState {
     isDrawerOpen: boolean;
+    isDocsDrawerOpen: boolean;
     isSidebarCollapsed: boolean;
     isUploadModalOpen: boolean;
     uploadModalScope: "global" | "session";
@@ -11,6 +12,7 @@ interface UIState {
 
     toggleDrawer: () => void;
     setDrawerOpen: (v: boolean) => void;
+    setDocsDrawerOpen: (v: boolean) => void;
     toggleSidebar: () => void;
     setSidebarCollapsed: (v: boolean) => void;
     openUploadModal: (scope?: "global" | "session") => void;
@@ -20,6 +22,7 @@ interface UIState {
 
 export const useUIStore = create<UIState>((set) => ({
     isDrawerOpen: false,
+    isDocsDrawerOpen: false,
     isSidebarCollapsed: false,
     isUploadModalOpen: false,
     uploadModalScope: "global",
@@ -27,6 +30,7 @@ export const useUIStore = create<UIState>((set) => ({
 
     toggleDrawer: () => set((s) => ({ isDrawerOpen: !s.isDrawerOpen })),
     setDrawerOpen: (v) => set({ isDrawerOpen: v }),
+    setDocsDrawerOpen: (v) => set({ isDocsDrawerOpen: v }),
     toggleSidebar: () => set((s) => ({ isSidebarCollapsed: !s.isSidebarCollapsed })),
     setSidebarCollapsed: (v) => set({ isSidebarCollapsed: v }),
     openUploadModal: (scope = "global") =>
