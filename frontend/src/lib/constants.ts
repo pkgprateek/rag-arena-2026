@@ -10,7 +10,7 @@ export const TIERS: Record<Tier, TierConfig> = {
         name: "Starter",
         label: "Starter",
         description:
-            "Simple RAG most clients ask for first: basic parsing, fixed chunking, and dense vector retrieval.",
+            "Baseline RAG with fixed chunking, vector retrieval, and straightforward answer generation.",
         color: "hsl(214, 90%, 60%)",
         bgGradient: "from-blue-600/30 to-blue-800/50",
     },
@@ -19,7 +19,7 @@ export const TIERS: Record<Tier, TierConfig> = {
         name: "Plus",
         label: "Plus",
         description:
-            "Optimized RAG: Unstructured parsing, semantic chunking, and hybrid dense+sparse retrieval for better grounding.",
+            "Improved grounding with richer parsing, semantic chunking, and hybrid dense plus sparse retrieval.",
         color: "hsl(142, 71%, 45%)",
         bgGradient: "from-emerald-600/30 to-emerald-800/50",
     },
@@ -28,7 +28,7 @@ export const TIERS: Record<Tier, TierConfig> = {
         name: "Enterprise",
         label: "Enterprise",
         description:
-            "Production architecture used by strong teams: deep hybrid retrieval, BGE reranking, strict grounded outputs, and semantic caching.",
+            "Production-grade retrieval with reranking, grounded output controls, and semantic caching.",
         color: "hsl(30, 90%, 55%)",
         bgGradient: "from-orange-600/30 to-orange-800/50",
     },
@@ -37,7 +37,7 @@ export const TIERS: Record<Tier, TierConfig> = {
         name: "Modern",
         label: "Modern",
         description:
-            "Modern 2025-2026 concepts: layout/page-aware chunking, LangExtract enrichment, and retrieval-time metadata boosts.",
+            "Layout-aware RAG with extracted metadata and retrieval-time boosts tuned for modern documents.",
         color: "hsl(280, 65%, 60%)",
         bgGradient: "from-purple-600/30 to-purple-800/50",
     },

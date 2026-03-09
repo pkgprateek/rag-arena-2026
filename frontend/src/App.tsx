@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FileText, UploadCloud, Loader2 } from "lucide-react";
+import { FileText, UploadCloud, Loader2, Video } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { InsightsDrawer } from "@/components/layout/InsightsDrawer";
@@ -117,9 +117,13 @@ function App() {
   };
 
   const handleNewChatWithTier = (tier: Tier) => {
-    chat.startNewSession(tier);
+    chat.reset(tier);
     compare.reset();
     setSessionDocs([]);
+    // Force navigation to home
+    if (location.pathname !== "/") {
+      navigate("/");
+    }
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -214,9 +218,11 @@ function App() {
         <Sidebar
           sessions={sidebarSessions}
           currentSessionId={chat.sessionId}
-          currentTier={chat.currentTier}
-          onTierChange={chat.requestTierChange}
           onNewChatWithTier={handleNewChatWithTier}
+          onNavigateHome={() => {
+            chat.reset();
+            navigate("/");
+          }}
           onCompare={() => navigate("/compare")}
           onSelectSession={chat.loadSession}
           onDeleteSession={handleDeleteSession}
@@ -225,14 +231,13 @@ function App() {
 
         <main className="flex-1 flex flex-col relative bg-white dark:bg-[#1A1A1A]">
           <header className="absolute top-0 w-full h-14 flex flex-row items-center justify-end px-6 z-10 font-sans pointer-events-auto">
-            <div className="flex items-center gap-3 h-full py-2 bg-white/50 backdrop-blur shadow-sm border border-slate-200 rounded-full pl-3 pr-2 mt-2 mr-2 dark:border-white/10 dark:bg-zinc-800/80">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase text-slate-600 dark:text-zinc-300">
+            <div className="flex items-center gap-2 mt-2">
+              <div
+                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white/50 px-3 text-xs font-semibold text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-800/50 dark:text-zinc-300"
+              >
                 <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: TIERS[chat.currentTier].color }} />
-                <span>{TIERS[chat.currentTier].name}</span>
+                <span className="tracking-wide">{TIERS[chat.currentTier].name}</span>
               </div>
-            </div>
-
-            <div className="flex items-center gap-2 mt-2 ml-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -242,8 +247,14 @@ function App() {
                 <FileText className="h-4 w-4 text-orange-500" />
                 <span>{totalDocs} Sources</span>
               </Button>
-              <Button size="sm" className="h-9 bg-slate-900 text-white hover:bg-zinc-800 dark:bg-white dark:text-slate-900 dark:hover:bg-zinc-200 rounded-full px-6 text-[13px] font-medium transition-all shadow-sm">
-                Book a call
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => window.open("https://cal.com/prateek-kumar-goyal/15min", "_blank")}
+                className="h-9 gap-1.5 px-6 min-w-[120px] text-xs font-medium bg-orange-500/10 hover:bg-orange-500/20 border border-orange-400/20 text-orange-600 hover:text-orange-50 dark:text-orange-400 dark:hover:text-orange-50 rounded-full transition-all shadow-sm"
+              >
+                <Video className="h-4 w-4" />
+                <span>Book a call</span>
               </Button>
             </div>
           </header>
