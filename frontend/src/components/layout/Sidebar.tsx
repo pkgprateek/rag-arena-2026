@@ -1,245 +1,295 @@
 // RAG Arena 2026 — Collapsible Left Sidebar
 
 import {
-    PanelLeftClose,
-    PanelLeftOpen,
-    Sparkles,
-    SquarePen,
-    GitCompareArrows,
-    History,
-    BarChart3,
-    Sun,
-    Moon,
-    Trash2,
-    ChevronDown,
+  PanelLeft,
+  Sparkles,
+  SquarePen,
+  GitCompareArrows,
+  BarChart3,
+  Trash2,
+  ChevronDown,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import {
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useUIStore } from "@/stores/uiStore";
 import { TIERS, TIER_ORDER } from "@/lib/constants";
 import type { Tier } from "@/types";
 
 interface SidebarSession {
-    id: string;
-    label: string;
-    timestamp: string;
-    tier: Tier;
+  id: string;
+  label: string;
+  timestamp: string;
+  tier: Tier;
 }
 
 interface SidebarProps {
-    sessions: SidebarSession[];
-    currentSessionId: string;
-    onNewChatWithTier: (tier: Tier) => void;
-    onNavigateHome: () => void;
-    onCompare: () => void;
-    onSelectSession: (sessionId: string) => void;
-    onDeleteSession: (sessionId: string) => void;
-    onToggleDrawer: () => void;
+  sessions: SidebarSession[];
+  currentSessionId: string;
+  onNewChatWithTier: (tier: Tier) => void;
+  onNavigateHome: () => void;
+  onCompare: () => void;
+  onSelectSession: (sessionId: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  onToggleDrawer: () => void;
+  totalDocs: number;
+  onDocsClick: () => void;
+  isComparePage?: boolean;
 }
 
 export function Sidebar({
-    sessions,
-    currentSessionId,
-    onNewChatWithTier,
-    onNavigateHome,
-    onCompare,
-    onSelectSession,
-    onDeleteSession,
-    onToggleDrawer,
+  sessions,
+  currentSessionId,
+  onNewChatWithTier,
+  onNavigateHome,
+  onCompare,
+  onSelectSession,
+  onDeleteSession,
+  onToggleDrawer,
+  totalDocs,
+  onDocsClick,
+  isComparePage,
 }: SidebarProps) {
-    const ui = useUIStore();
+  const ui = useUIStore();
 
-    return (
-        <div className="relative flex-shrink-0 h-screen transition-[width] duration-300 ease-in-out font-sans z-20" style={{ width: ui.isSidebarCollapsed ? "64px" : "260px" }}>
-            <aside className="absolute inset-0 flex flex-col border-r border-[#EAEAEA] bg-white/50 backdrop-blur-xl dark:border-white/[0.04] dark:bg-[#1A1A1A]/50 overflow-hidden">
-                <button
-                    onClick={onNavigateHome}
-                    className={`border-b border-[#EAEAEA] dark:border-white/[0.04] flex-shrink-0 hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors ${ui.isSidebarCollapsed
-                        ? "h-14 px-2 py-2 flex flex-col items-center justify-center gap-1"
-                        : "h-14 px-4 flex items-center gap-2"
-                    }`}
-                    title="Go to home"
-                >
-                    <div className="h-7 w-7 rounded-md bg-gradient-to-br from-orange-400 to-amber-600 flex items-center justify-center flex-shrink-0 shadow-sm text-white">
-                        <Sparkles className="h-4.5 w-4.5" />
-                    </div>
-                    {!ui.isSidebarCollapsed && (
-                        <span className="font-semibold text-[14px] tracking-tight text-slate-800 truncate dark:text-zinc-100">
-                            RAG Arena
-                        </span>
-                    )}
-                </button>
+  return (
+    <div
+      className="relative flex-shrink-0 h-screen transition-[width] duration-300 ease-in-out font-sans z-20"
+      style={{ width: ui.isSidebarCollapsed ? "64px" : "240px" }}
+    >
+      <aside className="absolute inset-0 flex flex-col border-r border-[#EAEAEA] bg-white/50 backdrop-blur-xl dark:border-white/[0.04] dark:bg-[#1A1A1A]/50 overflow-hidden">
+        <div className={`flex flex-col border-b border-[#EAEAEA] dark:border-white/[0.04] flex-shrink-0 transition-all ${ui.isSidebarCollapsed ? "py-4 gap-4 items-center" : "h-14 px-3 flex-row items-center justify-between"}`}>
+          {ui.isSidebarCollapsed ? (
+            <>
+              <button
+                onClick={ui.toggleSidebar}
+                className="h-8 w-8 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-colors"
+                aria-label="Expand sidebar"
+              >
+                <PanelLeft className="h-5 w-5 stroke-[1.5]" />
+              </button>
+              <button
+                onClick={onNavigateHome}
+                className="h-8 w-8 flex flex-shrink-0 items-center justify-center rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+                title="Go to home"
+              >
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-orange-400 to-amber-600 text-white shadow-sm transition-opacity hover:opacity-90">
+                  <Sparkles className="h-4 w-4" />
+                </div>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={onNavigateHome}
+                className="flex items-center gap-2.5 rounded-md pl-1 transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50"
+                title="Go to home"
+              >
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-orange-400 to-amber-600 text-white shadow-sm">
+                  <Sparkles className="h-4 w-4" />
+                </div>
+                <span className="font-semibold text-[14px] tracking-tight text-slate-800 truncate dark:text-zinc-100">
+                  RAG Arena
+                </span>
+              </button>
+              <button
+                onClick={ui.toggleSidebar}
+                className="h-8 w-8 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-colors"
+                aria-label="Collapse sidebar"
+              >
+                <PanelLeft className="h-5 w-5 stroke-[1.5]" />
+              </button>
+            </>
+          )}
+        </div>
 
-                <div className={`flex flex-col gap-2 p-3 flex-shrink-0 ${ui.isSidebarCollapsed ? "items-center" : ""}`}>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                title="Start a new chat"
-                                className={`
-                                    h-8 text-xs font-medium bg-orange-500/10 hover:bg-orange-500/20 border border-orange-400/20
-                                    text-orange-600 hover:text-orange-50
-                                    dark:text-orange-400 dark:hover:text-orange-50
-                                    transition-all group ${ui.isSidebarCollapsed ? "w-8 p-0 justify-center" : "w-full justify-between gap-2 px-3"}
+        <div
+          className={`flex flex-col gap-2 p-3 flex-shrink-0 ${ui.isSidebarCollapsed ? "items-center" : ""}`}
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                title="Start a new chat"
+                className={`
+                                    h-8 text-xs font-medium transition-all group
+                                    text-slate-700 hover:text-slate-900 hover:bg-slate-100
+                                    dark:text-zinc-300 dark:hover:text-zinc-100 dark:hover:bg-white/5
+                                    ${ui.isSidebarCollapsed ? "w-8 p-0 justify-center" : "w-full justify-between gap-2 px-3"}
                                 `}
-                            >
-                                <span className="inline-flex items-center gap-2">
-                                    <SquarePen className="h-4 w-4 flex-shrink-0 text-orange-600 dark:text-orange-400 group-hover:text-orange-50 dark:group-hover:text-orange-50 transition-colors" />
-                                    {!ui.isSidebarCollapsed && <span>New Chat</span>}
-                                </span>
-                                {!ui.isSidebarCollapsed && <ChevronDown className="h-4 w-4 text-orange-600/60 dark:text-orange-400/60 group-hover:text-orange-50 dark:group-hover:text-orange-50 transition-colors" />}
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-56">
-                            {TIER_ORDER.map((tier) => (
-                                <DropdownMenuItem
-                                    key={tier}
-                                    onClick={() => onNewChatWithTier(tier)}
-                                    className="text-xs cursor-pointer"
-                                >
-                                    {TIERS[tier].name}
-                                </DropdownMenuItem>
-                            ))}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+              >
+                <span className="inline-flex items-center gap-2">
+                  <SquarePen className="h-4 w-4 flex-shrink-0 text-orange-500 dark:text-orange-400 transition-colors" />
+                  {!ui.isSidebarCollapsed && <span>New Chat</span>}
+                </span>
+                {!ui.isSidebarCollapsed && (
+                  <ChevronDown className="h-4 w-4 text-slate-400 dark:text-zinc-500 transition-colors" />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56 rounded-xl border-slate-200 bg-white p-1.5 shadow-xl dark:border-white/[0.08] dark:bg-zinc-900">
+              {TIER_ORDER.map((tier) => (
+                <DropdownMenuItem
+                  key={tier}
+                  onClick={() => onNewChatWithTier(tier)}
+                  className="rounded-lg px-2.5 py-2 text-[13px] font-medium text-slate-700 cursor-pointer transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-300 dark:hover:bg-white/5 dark:hover:text-zinc-100"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: TIERS[tier].color }}
+                    />
+                    {TIERS[tier].name}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                onClick={onCompare}
-                                className={`
-                                    h-8 text-xs font-medium text-slate-600 hover:text-slate-900
-                                    hover:bg-slate-100 transition-all dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-white/5
+
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                onClick={onCompare}
+                className={`
+                                    h-8 text-xs font-medium transition-all
+                                    ${isComparePage
+                    ? "bg-slate-200/50 text-slate-900 shadow-sm dark:bg-white/10 dark:text-zinc-100"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-white/5"
+                  }
                                     ${ui.isSidebarCollapsed ? "w-8 p-0 justify-center" : "w-full justify-start gap-2 px-3"}
                                 `}
-                            >
-                                <GitCompareArrows className="h-4 w-4 flex-shrink-0" />
-                                {!ui.isSidebarCollapsed && <span>Compare Tiers</span>}
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">Run side-by-side compare</TooltipContent>
-                    </Tooltip>
-                </div>
+              >
+                <GitCompareArrows className="h-4 w-4 flex-shrink-0" />
+                {!ui.isSidebarCollapsed && <span>Compare Tiers</span>}
+              </Button>
+            </TooltipTrigger>
+            {ui.isSidebarCollapsed && (
+              <TooltipContent side="right">Run side-by-side compare</TooltipContent>
+            )}
+          </Tooltip>
 
-                <div className="border-t border-[#EAEAEA] dark:border-white/[0.04]"></div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                onClick={onDocsClick}
+                className={`
+                                    h-8 text-xs font-medium transition-all
+                                    text-slate-600 hover:text-slate-900 hover:bg-slate-100
+                                    dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-white/5
+                                    ${ui.isSidebarCollapsed ? "w-8 p-0 justify-center" : "w-full justify-start gap-2 px-3"}
+                                `}
+              >
+                <FileText className="h-4 w-4 flex-shrink-0" />
+                {!ui.isSidebarCollapsed && <span>{totalDocs} Sources</span>}
+              </Button>
+            </TooltipTrigger>
+            {ui.isSidebarCollapsed && (
+              <TooltipContent side="right">View Knowledge Base</TooltipContent>
+            )}
+          </Tooltip>
 
-                <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-0 mt-3">
-                    {!ui.isSidebarCollapsed && (
-                        <div className="flex items-center gap-1.5 px-1 mb-2 mt-2">
-                            <History className="h-5 w-5 text-slate-400 dark:text-zinc-600" />
-                            <span className="text-[10px] uppercase tracking-widest text-slate-400 dark:text-zinc-600 font-medium">
-                                Recents
-                            </span>
-                        </div>
-                    )}
-                    {sessions.slice(0, 8).map((session) => (
-                        <Tooltip key={session.id}>
-                            <TooltipTrigger asChild>
-                                <div
-                                    className={`
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                onClick={onToggleDrawer}
+                className={`
+                                    h-8 text-xs font-medium transition-all
+                                    text-slate-600 hover:text-slate-900 hover:bg-slate-100
+                                    dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-white/5
+                                    ${ui.isSidebarCollapsed ? "w-8 p-0 justify-center" : "w-full justify-start gap-2 px-3"}
+                                `}
+              >
+                <BarChart3 className="h-4 w-4 flex-shrink-0" />
+                {!ui.isSidebarCollapsed && <span>Metrics</span>}
+              </Button>
+            </TooltipTrigger>
+            {ui.isSidebarCollapsed && (
+              <TooltipContent side="right">View Metrics</TooltipContent>
+            )}
+          </Tooltip>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-0 mt-3">
+          {sessions.slice(0, 8).map((session) => (
+            <Tooltip key={session.id}>
+              <TooltipTrigger asChild>
+                <div
+                  className={`
                                         w-full rounded-md px-2 py-1.5 text-xs transition-all
                                         ${session.id === currentSessionId
-                                            ? "bg-slate-200/50 text-slate-900 dark:bg-white/10 dark:text-zinc-100"
-                                            : "text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:text-zinc-500 dark:hover:text-zinc-300 dark:hover:bg-white/5"}
+                      ? "bg-slate-200/50 text-slate-900 dark:bg-white/10 dark:text-zinc-100"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:text-zinc-500 dark:hover:text-zinc-300 dark:hover:bg-white/5"
+                    }
                                         ${ui.isSidebarCollapsed ? "text-center" : ""}
                                     `}
-                                >
-                                    {ui.isSidebarCollapsed ? (
-                                        <button onClick={() => onSelectSession(session.id)} className="w-full">
-                                            <span className="block truncate text-[10px]">{session.label.slice(0, 2)}</span>
-                                        </button>
-                                    ) : (
-                                        <div className="flex items-center gap-2">
-                                            <button onClick={() => onSelectSession(session.id)} className="flex-1 min-w-0 text-left">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="truncate">{session.label}</span>
-                                                    <span className="inline-flex items-center rounded border border-slate-200 bg-white px-1 h-4 text-[9px] leading-none uppercase tracking-wide text-slate-500 dark:border-white/10 dark:bg-zinc-800 dark:text-zinc-400">
-                                                        {session.tier}
-                                                    </span>
-                                                </div>
-                                                <span className="text-slate-400 dark:text-zinc-600 flex-shrink-0 text-[10px]">{session.timestamp}</span>
-                                            </button>
-                                            <button
-                                                onClick={() => onDeleteSession(session.id)}
-                                                className="rounded p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:text-zinc-600 dark:hover:text-rose-400 dark:hover:bg-rose-500/15 transition-colors opacity-0 group-hover:opacity-100"
-                                                aria-label="Delete session"
-                                                title="Delete session"
-                                            >
-                                                <Trash2 className="h-4.5 w-4.5" />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            </TooltipTrigger>
-                            {ui.isSidebarCollapsed && <TooltipContent side="right">{session.label}</TooltipContent>}
-                        </Tooltip>
-                    ))}
-                    {sessions.length === 0 && !ui.isSidebarCollapsed && (
-                        <p className="text-slate-400 dark:text-zinc-600 text-[11px] px-2 pt-1">No sessions yet</p>
-                    )}
+                >
+                  {ui.isSidebarCollapsed ? (
+                    <button
+                      onClick={() => onSelectSession(session.id)}
+                      className="w-full"
+                    >
+                      <span className="block truncate text-[10px]">
+                        {session.label.slice(0, 2)}
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onSelectSession(session.id)}
+                        className="flex-1 min-w-0 text-left"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate">{session.label}</span>
+                          <span className="inline-flex items-center rounded border border-slate-200 bg-white px-1 h-4 text-[9px] leading-none uppercase tracking-wide text-slate-500 dark:border-white/10 dark:bg-zinc-800 dark:text-zinc-400">
+                            {session.tier}
+                          </span>
+                        </div>
+                        <span className="text-slate-400 dark:text-zinc-600 flex-shrink-0 text-[10px]">
+                          {session.timestamp}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => onDeleteSession(session.id)}
+                        className="rounded p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:text-zinc-600 dark:hover:text-rose-400 dark:hover:bg-rose-500/15 transition-colors opacity-0 group-hover:opacity-100"
+                        aria-label="Delete session"
+                        title="Delete session"
+                      >
+                        <Trash2 className="h-4.5 w-4.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-
-                <div className={`p-3 border-t border-[#EAEAEA] dark:border-white/[0.04] flex-shrink-0 ${ui.isSidebarCollapsed ? "flex flex-col items-center gap-2" : "space-y-2"}`}>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                onClick={onToggleDrawer}
-                                className={`
-                                    h-8 text-xs font-medium transition-all
-                                    text-slate-600 hover:text-slate-900 hover:bg-slate-100
-                                    dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-white/5
-                                    ${ui.isSidebarCollapsed ? "w-8 p-0 justify-center" : "w-full justify-start gap-2 px-3"}
-                                `}
-                            >
-                                <BarChart3 className="h-4 w-4 flex-shrink-0" />
-                                {!ui.isSidebarCollapsed && <span>Metrics</span>}
-                            </Button>
-                        </TooltipTrigger>
-                        {ui.isSidebarCollapsed && <TooltipContent side="right">View Metrics</TooltipContent>}
-                    </Tooltip>
-
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                onClick={() => ui.setTheme(ui.theme === "dark" ? "light" : "dark")}
-                                className={`
-                                    h-8 text-xs font-medium transition-all
-                                    text-slate-600 hover:text-slate-900 hover:bg-slate-100
-                                    dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-white/5
-                                    ${ui.isSidebarCollapsed ? "w-8 p-0 justify-center" : "w-full justify-start gap-2 px-3"}
-                                `}
-                            >
-                                {ui.theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                                {!ui.isSidebarCollapsed && <span>{ui.theme === "dark" ? "Light mode" : "Dark mode"}</span>}
-                            </Button>
-                        </TooltipTrigger>
-                        {ui.isSidebarCollapsed && <TooltipContent side="right">Toggle Theme</TooltipContent>}
-                    </Tooltip>
-                </div>
-            </aside>
-
-            {/* Toggle Button - positioned outside sidebar at top-right, aligned with logo */}
-            <button
-                onClick={ui.toggleSidebar}
-                className="absolute top-[12px] -right-[44px] z-50 h-8 w-8 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-white/10 shadow-[0_1px_3px_rgba(0,0,0,0.04)] flex items-center justify-center text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-slate-50 dark:hover:bg-zinc-800 hover:scale-105 transition-all outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50"
-                aria-label="Toggle sidebar"
-            >
-                {ui.isSidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-            </button>
+              </TooltipTrigger>
+              {ui.isSidebarCollapsed && (
+                <TooltipContent side="right">{session.label}</TooltipContent>
+              )}
+            </Tooltip>
+          ))}
+          {sessions.length === 0 && !ui.isSidebarCollapsed && (
+            <p className="text-slate-400 dark:text-zinc-600 text-[11px] px-2 pt-1">
+              No sessions yet
+            </p>
+          )}
         </div>
-    );
+      </aside>
+
+
+    </div>
+  );
 }
