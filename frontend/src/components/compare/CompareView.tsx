@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
+import { Sparkles, Loader2 } from "lucide-react";
 import { MetricsCard } from "@/components/compare/MetricsCard";
-import { TierShowcase } from "@/components/shared/TierShowcase";
+import { MessageComposer } from "@/components/chat/MessageComposer";
+
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -13,7 +14,67 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TIERS, TIER_ORDER } from "@/lib/constants";
-import type { Tier, TierResult } from "@/types";
+import type { Tier, TierResult, TierConfig } from "@/types";
+
+function TierCard({ config }: { config: TierConfig }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const glowRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cardRef.current || !glowRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    glowRef.current.style.setProperty("--mouse-x", `${x}px`);
+    glowRef.current.style.setProperty("--mouse-y", `${y}px`);
+  };
+
+  const handleMouseEnter = () => {
+    if (glowRef.current) glowRef.current.style.opacity = "1";
+  };
+
+  const handleMouseLeave = () => {
+    if (glowRef.current) glowRef.current.style.opacity = "0";
+  };
+
+  return (
+    <div
+      ref={cardRef}
+      onMouseMove={handleMouseMove}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      className="group relative flex flex-col items-start gap-3 overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 text-left transition-[background-color,border-color,box-shadow,transform] duration-300 ease-out hover:bg-slate-50/50 dark:border-white/10 dark:bg-zinc-900/60 dark:hover:bg-zinc-900 shadow-sm hover:border-slate-300 dark:hover:border-white/20 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-zinc-950"
+      tabIndex={0}
+      role="button"
+      aria-label={`View details for ${config.name}`}
+    >
+      <div
+        ref={glowRef}
+        className="absolute inset-0 transition-opacity duration-300 pointer-events-none opacity-0"
+        style={{
+          background: `radial-gradient(400px circle at var(--mouse-x, 0) var(--mouse-y, 0), color-mix(in srgb, ${config.color} 15%, transparent), transparent 40%)`,
+        }}
+      />
+      <div className="flex flex-col items-start gap-1 relative pointer-events-none w-full">
+        <div className="flex items-center gap-2 mb-1">
+          <span
+            className="h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] opacity-90 transition-transform duration-300 ease-out group-hover:scale-125"
+            style={{
+              backgroundColor: config.color,
+              color: config.color,
+            }}
+          />
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-50 tracking-tight">
+            {config.name}
+          </h3>
+        </div>
+        <p className="text-[13px] leading-relaxed text-slate-600 dark:text-zinc-400">
+          {config.description}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 interface CompareViewProps {
   tierResults: Record<string, TierResult>;
@@ -21,6 +82,10 @@ interface CompareViewProps {
   onSelectedTiersChange: (tiers: Tier[]) => void;
   onRunCompare: (message: string) => void;
   isRunning: boolean;
+  stagedFiles?: File[];
+  onAttach?: () => void;
+  onRemoveStagedFile?: (idx: number) => void;
+  isDraggingOver?: boolean;
 }
 
 export function CompareView({
@@ -29,134 +94,192 @@ export function CompareView({
   onSelectedTiersChange,
   onRunCompare,
   isRunning,
+  stagedFiles = [],
+  onAttach,
+  onRemoveStagedFile,
+  isDraggingOver = false,
 }: CompareViewProps) {
   const [mode, setMode] = useState<"two" | "all">("two");
-  const [prompt, setPrompt] = useState("");
 
   const results = Object.values(tierResults).filter((result) => result.run_id);
   const hasInteracted = results.length > 0;
   const tiersToShow = mode === "all" ? TIER_ORDER : selectedTiers;
   const visibleTierSet = new Set(tiersToShow);
-  const visibleResults = results.filter((result) => visibleTierSet.has(result.tier));
+  const visibleResults = results.filter((result) =>
+    visibleTierSet.has(result.tier),
+  );
 
-  const handleCompare = () => {
-    if (!prompt.trim() || isRunning) return;
-    if (mode === "two" && selectedTiers[0] === selectedTiers[1]) {
-      alert("Please select different tiers to compare.");
-      return;
-    }
-    onRunCompare(prompt);
+  const isRunDisabled =
+    isRunning || (mode === "two" && selectedTiers[0] === selectedTiers[1]);
+
+  const handleRunCompare = (msg: string) => {
+    if (!msg.trim() || isRunDisabled) return;
+    onRunCompare(msg);
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      handleCompare();
-    }
-  };
+  const renderConfigControls = () => (
+    <>
+      <div className="flex h-8 box-border items-center bg-slate-100/90 dark:bg-zinc-800/60 p-[2px] rounded-full border border-slate-200/60 dark:border-white/10">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setMode("all")}
+          className={`h-[26px] py-0 rounded-full px-3 text-[12px] transition-[background-color,color,box-shadow] duration-200 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${mode === "all"
+            ? "bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] text-slate-900 dark:bg-zinc-700 dark:text-zinc-50"
+            : "text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-transparent dark:hover:bg-transparent"
+            }`}
+        >
+          All tiers
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setMode("two")}
+          className={`h-[26px] py-0 rounded-full px-3 text-[12px] transition-[background-color,color,box-shadow] duration-200 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${mode === "two"
+            ? "bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] text-slate-900 dark:bg-zinc-700 dark:text-zinc-50"
+            : "text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-transparent dark:hover:bg-transparent"
+            }`}
+        >
+          Compare 2
+        </Button>
+      </div>
+
+      {mode === "two" && (
+        <div className="flex flex-wrap items-center gap-1.5 ml-0.5">
+          {[0, 1].map((idx) => (
+            <Select
+              key={idx}
+              value={selectedTiers[idx]}
+              onValueChange={(value) => {
+                const next = [...selectedTiers];
+                next[idx] = value as Tier;
+                onSelectedTiersChange(next);
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="flex h-[32px] py-0 w-fit min-w-[96px] items-center justify-between gap-1.5 rounded-full border border-slate-200 bg-white hover:bg-slate-50 pl-3 pr-2.5 text-[12px] font-medium text-slate-700 shadow-none transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 focus-visible:border-sky-500 dark:border-white/10 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700/80 dark:focus-visible:border-sky-500"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-zinc-900 text-xs shadow-xl">
+                {TIER_ORDER.map((tier) => (
+                  <SelectItem
+                    key={tier}
+                    value={tier}
+                    disabled={idx === 1 && selectedTiers[0] === tier}
+                    className={`rounded-lg px-2.5 py-2 cursor-pointer transition-colors duration-150 ${selectedTiers[idx] === tier
+                      ? "bg-slate-100 text-slate-900 dark:bg-zinc-800 dark:text-zinc-50"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-200"
+                      }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="h-1.5 w-1.5 rounded-full shadow-[0_0_4px_currentColor]"
+                        style={{
+                          backgroundColor: TIERS[tier].color,
+                          color: TIERS[tier].color,
+                        }}
+                      />
+                      <span className="font-medium text-[13px] tracking-tight">
+                        {TIERS[tier].name}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ))}
+        </div>
+      )}
+    </>
+  );
 
   return (
-    <div className="flex h-full flex-col bg-white dark:bg-[#1A1A1A]">
-      <ScrollArea className="flex-1 px-4 pb-40 pt-16 sm:px-6">
+    <div className="flex h-full flex-col bg-transparent dark:bg-[#121212] min-h-0 overflow-hidden">
+      <ScrollArea className="flex-1 px-4 pb-8 pt-16 sm:px-6 sm:pt-24 min-h-0">
         {!hasInteracted ? (
-          <section className="mx-auto flex w-full max-w-4xl flex-col gap-5 py-6">
-            <div className="mx-auto max-w-2xl text-center">
-              <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-400">
-                Compare lab
-              </p>
-              <h2 className="mt-3 text-[30px] font-semibold tracking-tight text-slate-900 dark:text-zinc-100 sm:text-[38px]">
-                Make the tier differences obvious
+          <section className="mx-auto flex w-full max-w-5xl flex-col items-center gap-12 pt-16 pb-8 text-center sm:pt-24">
+            {/* Header Content */}
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 ease-out fill-mode-both">
+              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50/50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600 backdrop-blur-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                <Sparkles className="h-3 w-3 text-orange-500" />
+                Architectural Comparison
+              </span>
+              <h2 className="text-[36px] font-medium tracking-tight text-balance text-slate-900 dark:text-zinc-50 sm:text-[44px] md:text-[52px] leading-[1.1]">
+                Evaluate retrieval precision.
               </h2>
-              <p className="mt-3 text-[15px] leading-7 text-slate-600 dark:text-zinc-300">
-                Use the exact same prompt across the stacks and show clients how retrieval quality,
-                grounding, and response shape change as the architecture improves.
+              <p className="mx-auto max-w-[640px] text-base leading-relaxed text-slate-600 dark:text-zinc-400">
+                Run identical queries across our retrieval architectures
+                simultaneously to evaluate accuracy, latency, and contextual
+                grounding side-by-side.
               </p>
             </div>
 
-            <div className="mx-auto w-full max-w-3xl">
-              <div className="mb-3 text-center">
-                <p className="text-sm font-semibold text-slate-900 dark:text-zinc-100">
-                  Comparison setup
-                </p>
-                <p className="mt-1 text-sm text-slate-600 dark:text-zinc-300">
-                  Start with all four tiers, then narrow to two when you want a focused side-by-side.
-                </p>
-              </div>
-              <p className="mb-3 text-center text-xs font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-zinc-400">
-                Retrieval approaches
-              </p>
-              <TierShowcase highlightedTiers={mode === "all" ? TIER_ORDER : selectedTiers} compact />
+            {/* Tier Definition Cards */}
+            <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200 ease-out fill-mode-both">
+              {TIER_ORDER.map((tier) => (
+                <TierCard key={tier} config={TIERS[tier]} />
+              ))}
             </div>
           </section>
         ) : (
-          <section className="mx-auto flex w-full max-w-6xl flex-col gap-5 py-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 py-6 animate-in fade-in duration-500">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <h2 className="text-[28px] font-semibold tracking-tight text-slate-900 dark:text-zinc-100">
-                  Comparison results
+                <h2 className="text-[28px] font-semibold tracking-tight text-slate-900 dark:text-zinc-50">
+                  Comparison Results
                 </h2>
-                <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
-                  Read the answers first, then use the metrics to inspect retrieval quality and speed.
+                <p className="mt-1.5 text-sm leading-6 text-slate-600 dark:text-zinc-400">
+                  Read the answers first, then use the metrics to inspect
+                  retrieval quality and speed.
                 </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {tiersToShow.map((tier) => (
-                  <Badge
-                    key={tier}
-                    variant="secondary"
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] text-slate-600 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-300"
-                  >
-                    <span
-                      className="mr-2 inline-block h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: TIERS[tier].color }}
-                    />
-                    {TIERS[tier].name}
-                  </Badge>
-                ))}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               {visibleResults.map((result, index) => (
                 <div
                   key={result.run_id}
-                  className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500"
+                  className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500"
                   style={{ animationDelay: `${index * 80}ms` }}
                 >
-                  <article className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-white/10 dark:bg-zinc-900/50">
+                  <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-zinc-900/50">
                     <div className="mb-4 flex items-start justify-between gap-3 border-b border-slate-100 pb-4 dark:border-white/5">
                       <div>
                         <div className="flex items-center gap-2">
                           <span
                             className="h-2 w-2 rounded-full"
-                            style={{ backgroundColor: TIERS[result.tier].color }}
+                            style={{
+                              backgroundColor: TIERS[result.tier].color,
+                            }}
                           />
-                          <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">
+                          <h3 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-zinc-50">
                             {TIERS[result.tier].name}
                           </h3>
                         </div>
-                        <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
+                        <p className="mt-1 text-xs leading-6 text-slate-500 dark:text-zinc-400">
                           {TIERS[result.tier].description}
                         </p>
                       </div>
                       <Badge
                         variant="outline"
-                        className="rounded-full border-slate-200 px-2.5 py-1 text-[10px] text-slate-500 dark:border-white/10 dark:text-zinc-400"
+                        className="rounded-full border-slate-200 px-2.5 py-1 text-[10px] font-medium tracking-wide text-slate-600 uppercase dark:border-white/10 dark:text-zinc-300"
                       >
                         {result.status === "done" ? "Complete" : result.status}
                       </Badge>
                     </div>
 
-                    <div className="min-h-[280px] rounded-2xl bg-slate-50 p-4 dark:bg-zinc-950/40">
-                      <div className="max-h-[320px] overflow-y-auto pr-2 text-sm leading-7 text-slate-700 dark:text-zinc-200 whitespace-pre-wrap">
+                    <div className="min-h-[280px] rounded-[16px] bg-slate-50 p-5 dark:bg-zinc-950/60 ring-1 ring-inset ring-slate-100 dark:ring-white/5">
+                      <div className="max-h-[320px] overflow-y-auto pr-2 text-[14px] leading-relaxed text-slate-700 dark:text-zinc-300 whitespace-pre-wrap">
                         {result.answer || (
-                          <span className="inline-flex items-center gap-2 text-slate-400 dark:text-zinc-500">
+                          <span className="inline-flex items-center gap-3 text-slate-500 dark:text-zinc-400">
                             {result.status === "error" ? (
-                              "Generation failed"
+                              <span className="text-red-500 dark:text-red-400 font-medium">Generation failed</span>
                             ) : (
                               <>
-                                Generating response
-                                <Loader2 className="h-4 w-4 animate-spin text-sky-500" />
+                                <span className="font-mono text-xs uppercase tracking-widest text-sky-600 dark:text-sky-400 animate-pulse">Running analysis</span>
+                                <Loader2 className="h-3.5 w-3.5 animate-[spin_1.5s_linear_infinite] text-sky-500" />
                               </>
                             )}
                           </span>
@@ -177,115 +300,21 @@ export function CompareView({
           </section>
         )}
       </ScrollArea>
-
-      <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-white via-white to-transparent px-4 pb-8 pt-12 dark:from-[#1A1A1A] dark:via-[#1A1A1A]">
-        <div className="pointer-events-auto mx-auto max-w-4xl rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_30px_-14px_rgba(15,23,42,0.22)] dark:border-white/10 dark:bg-zinc-900/95">
-          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 dark:border-white/5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-zinc-400">
-              <Sparkles className="h-3.5 w-3.5 text-orange-500" />
-              One prompt, comparable answers
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-zinc-950">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setMode("all")}
-                  className={`h-8 rounded-full px-4 text-xs ${
-                    mode === "all"
-                      ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
-                      : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                  }`}
-                >
-                  All tiers
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setMode("two")}
-                  className={`h-8 rounded-full px-4 text-xs ${
-                    mode === "two"
-                      ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
-                      : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                  }`}
-                >
-                  Compare two
-                </Button>
-              </div>
-
-              {mode === "two" && (
-                <>
-                  {[0, 1].map((idx) => (
-                    <Select
-                      key={idx}
-                      value={selectedTiers[idx]}
-                      onValueChange={(value) => {
-                        const next = [...selectedTiers];
-                        next[idx] = value as Tier;
-                        onSelectedTiersChange(next);
-                      }}
-                    >
-                      <SelectTrigger className="h-9 w-[150px] rounded-full border-slate-200 bg-white text-xs shadow-none focus:ring-orange-500/20 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-2xl border-slate-200 bg-white dark:border-white/10 dark:bg-zinc-900">
-                        {TIER_ORDER.map((tier) => (
-                          <SelectItem
-                            key={tier}
-                            value={tier}
-                            disabled={idx === 1 && selectedTiers[0] === tier}
-                            className="m-1 rounded-xl text-xs focus:bg-slate-100 dark:focus:bg-zinc-800"
-                          >
-                            <span className="flex items-center gap-2">
-                              <span
-                                className="h-1.5 w-1.5 rounded-full"
-                                style={{ backgroundColor: TIERS[tier].color }}
-                              />
-                              {TIERS[tier].name}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ))}
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 p-4 sm:p-5">
-            <textarea
-              rows={1}
-              placeholder="Ask one question you want every tier to answer..."
-              aria-label="Compare prompt"
-              className="min-h-[76px] w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[15px] leading-7 text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-300 dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500"
-              value={prompt}
-              onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)}
-              onKeyDown={handleKeyDown}
-            />
-
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-slate-500 dark:text-zinc-400">
-                Start with `All tiers`, then switch to `Compare two` when a client wants a tighter contrast.
-              </p>
-              <Button
-                size="sm"
-                disabled={!prompt.trim() || isRunning}
-                onClick={handleCompare}
-                className={`h-10 rounded-full px-5 text-sm font-medium shrink-0 ${
-                  prompt.trim()
-                    ? "bg-slate-900 text-white hover:bg-slate-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-                    : "bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500"
-                }`}
-              >
-                {isRunning ? "Comparing..." : "Compare"}
-                {!isRunning && <ArrowRight className="h-4 w-4" />}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <MessageComposer
+        onSend={handleRunCompare}
+        disabled={isRunDisabled}
+        placeholder={
+          mode === "two" && selectedTiers[0] === selectedTiers[1]
+            ? "Select different tiers to compare..."
+            : "Ask a core question to compare these engines..."
+        }
+        centered={false}
+        customControls={renderConfigControls()}
+        stagedFiles={stagedFiles}
+        onAttach={onAttach}
+        onRemoveStagedFile={onRemoveStagedFile}
+        isDraggingOver={isDraggingOver}
+      />
     </div>
   );
 }
