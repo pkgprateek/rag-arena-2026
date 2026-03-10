@@ -49,12 +49,12 @@
 
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.99 0 0);
-  /* Pure clean white */
+  --background: #F4EFE6;
+  /* Warm pastel */
   --foreground: oklch(0.2 0 0);
-  --card: oklch(1 0 0);
+  --card: #F4EFE6;
   --card-foreground: oklch(0.2 0 0);
-  --popover: oklch(1 0 0);
+  --popover: #F4EFE6;
   --popover-foreground: oklch(0.2 0 0);
   --primary: oklch(0.2 0 0);
   --primary-foreground: oklch(0.98 0 0);
