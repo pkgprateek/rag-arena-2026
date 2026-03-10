@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # Tiers 2+ will fall back to basic parsing if this is not set.
     unstructured_api_key: str = ""
 
-    # --- LangExtract (Tier 3 metadata enrichment) ---
+    # --- LangExtract (Modern-tier metadata enrichment) ---
     langextract_model: str = "google/gemini-2.0-flash"
 
     # --- Semantic Cache (Tier 4) ---

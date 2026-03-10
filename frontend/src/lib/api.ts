@@ -6,6 +6,8 @@ import type {
     CompareRunRequest,
     CompareRunResponse,
     SessionSummary,
+    Tier,
+    TierProfile,
 } from "@/types";
 import { API_BASE } from "@/lib/constants";
 
@@ -73,6 +75,19 @@ export const api = {
         if (!res.ok) return "";
         const data = await res.json();
         return data.calcom_link || "";
+    },
+
+    fetchTierProfiles: async (): Promise<Record<Tier, TierProfile>> => {
+        const res = await fetch(`${API_BASE}/config/tiers`);
+        if (!res.ok) throw new Error("Failed to fetch tier profiles");
+        const data = (await res.json()) as TierProfile[];
+        return data.reduce(
+            (acc, profile) => {
+                acc[profile.id] = profile;
+                return acc;
+            },
+            {} as Record<Tier, TierProfile>,
+        );
     },
 
     listDocs: async (): Promise<{

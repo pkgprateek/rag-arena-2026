@@ -15,6 +15,7 @@ export type Role = "user" | "assistant" | "system";
 export interface Citation {
     doc_id: string;
     page: number;
+    section: string;
     snippet: string;
     score: number;
 }
@@ -36,6 +37,18 @@ export interface Metrics {
     completion_tokens: number;
     cost_estimate: number;
     cache_hit: boolean;
+    parse_mode: string;
+    chunk_mode: string;
+    retrieval_mode: string;
+    grounding_mode: string;
+    optimization_mode: string;
+    hybrid_used: boolean;
+    rerank_used: boolean;
+    query_orchestration_used: boolean;
+    diversity_control_used: boolean;
+    enrichment_used: boolean;
+    page_aware_used: boolean;
+    unique_docs_used: number;
 }
 
 export interface Message {
@@ -67,11 +80,29 @@ export interface StreamEvent {
 
 export interface TierConfig {
     id: Tier;
+    market_position: string;
+    parse_mode: string;
+    chunk_mode: string;
+    retrieval_mode: string;
+    grounding_mode: string;
+    optimization_mode: string;
+    ui_summary: string;
     name: string;
     label: string;
     description: string;
     color: string;
     bgGradient: string;
+}
+
+export interface TierProfile {
+    id: Tier;
+    market_position: string;
+    parse_mode: string;
+    chunk_mode: string;
+    retrieval_mode: string;
+    grounding_mode: string;
+    optimization_mode: string;
+    ui_summary: string;
 }
 
 export interface TierResult {

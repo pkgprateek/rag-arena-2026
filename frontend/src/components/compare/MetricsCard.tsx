@@ -7,7 +7,8 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { TIERS, METRIC_LABELS, METRIC_TOOLTIPS } from "@/lib/constants";
+import { METRIC_LABELS, METRIC_TOOLTIPS } from "@/lib/constants";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import type { Metrics, EvalResult, Tier, RunStatus } from "@/types";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -108,7 +109,8 @@ export function MetricsCard({
     evalResult,
     winnerBadge,
 }: MetricsCardProps) {
-    const tierConfig = TIERS[tier];
+    const { tiers } = useTierCatalog();
+    const tierConfig = tiers[tier];
     const winner = winnerBadge ? WINNER_CONFIG[winnerBadge] : null;
 
     return (
@@ -174,6 +176,40 @@ export function MetricsCard({
                             <MetricRow
                                 label={METRIC_LABELS.cache_hit}
                                 value={metrics.cache_hit ? "Yes" : "No"}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.retrieval_mode}
+                                value={metrics.retrieval_mode}
+                                tooltip={METRIC_TOOLTIPS.retrieval_mode}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.unique_docs_used}
+                                value={metrics.unique_docs_used}
+                                tooltip={METRIC_TOOLTIPS.unique_docs_used}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.hybrid_used}
+                                value={metrics.hybrid_used ? "Yes" : "No"}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.rerank_used}
+                                value={metrics.rerank_used ? "Yes" : "No"}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.query_orchestration_used}
+                                value={metrics.query_orchestration_used ? "Yes" : "No"}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.diversity_control_used}
+                                value={metrics.diversity_control_used ? "Yes" : "No"}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.enrichment_used}
+                                value={metrics.enrichment_used ? "Yes" : "No"}
+                            />
+                            <MetricRow
+                                label={METRIC_LABELS.page_aware_used}
+                                value={metrics.page_aware_used ? "Yes" : "No"}
                             />
                         </div>
                     )}

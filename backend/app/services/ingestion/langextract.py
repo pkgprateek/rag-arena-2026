@@ -1,6 +1,6 @@
 """RAG Arena 2026 — LangExtract: LLM-based metadata extraction.
 
-Tier 3+: Enriches each chunk with LLM-generated metadata:
+Used by the Modern tier to enrich chunks with LLM-generated metadata:
   - title: Short descriptive title for the chunk
   - summary: 1-2 sentence summary
   - keywords: 3-5 relevant keywords

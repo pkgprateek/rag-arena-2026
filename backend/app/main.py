@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.redis_client import close_redis
-from app.routes import chat, compare, docs, runs, stream
+from app.routes import chat, compare, config, docs, runs, stream
 from app.db.database import init_db
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ app.add_middleware(
 # --- Routes ---
 app.include_router(chat.router)
 app.include_router(compare.router)
+app.include_router(config.router)
 app.include_router(stream.router)
 app.include_router(runs.router)
 app.include_router(docs.router)
@@ -87,9 +88,3 @@ async def list_models() -> dict:
     models = settings.get_available_models()
     default = settings.get_default_model()
     return {"models": models, "default": default}
-
-
-@app.get("/config/calcom")
-async def get_calcom_link() -> dict:
-    """Return the Cal.com link for CTA buttons."""
-    return {"calcom_link": settings.calcom_link}

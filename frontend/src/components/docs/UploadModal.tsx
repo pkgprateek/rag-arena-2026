@@ -167,7 +167,7 @@ export function UploadModal({
                     <div>
                         <h2 className="text-[15px] font-semibold tracking-tight text-slate-900 dark:text-zinc-50">Upload Documents</h2>
                         <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
-                            Indexed for Starter tier immediately. Higher tiers index on first query.
+                            Starter indexes immediately. Plus, Enterprise, and Modern build their richer indexes on first query.
                         </p>
                     </div>
                     <Button

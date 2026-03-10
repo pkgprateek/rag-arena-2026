@@ -1,11 +1,9 @@
 """RAG Arena 2026 — Document Chunkers.
 
-Tier 1: Fixed-size Chunking
-Tier 2: Real Semantic Chunking (embedding similarity breakpoints)
-Tier 3: Semantic Chunking (LangExtract metadata added separately)
-Tier 4: Layout/Page-aware Chunking (section + page structure preservation)
-
-All chunkers accept list[ParsedElement] from parsers and produce list[Chunk].
+Starter:    fixed-size chunking
+Plus:       semantic / structure-aware chunking
+Enterprise: production semantic chunking
+Modern:     layout/page-aware chunking, with enrichment added separately
 """
 
 import hashlib

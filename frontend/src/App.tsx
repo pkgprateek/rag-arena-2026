@@ -14,8 +14,9 @@ import { PostCompareCTA } from "@/components/marketing/PostCompareCTA";
 import { UploadModal } from "@/components/docs/UploadModal";
 import { useChat } from "@/hooks/useChat";
 import { useCompare } from "@/hooks/useCompare";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import { useUIStore } from "@/stores/uiStore";
-import { TIERS } from "@/lib/constants";
+import { useTierProfilesStore } from "@/stores/tierProfilesStore";
 import { api } from "@/lib/api";
 import { Sun, Moon } from "lucide-react";
 import type { Tier } from "@/types";
@@ -38,6 +39,8 @@ function App() {
   const chat = useChat();
   const compare = useCompare();
   const ui = useUIStore();
+  const setTierProfiles = useTierProfilesStore((state) => state.setProfiles);
+  const { tiers } = useTierCatalog();
   const navigate = useNavigate();
   const location = useLocation();
   const isComparePage = location.pathname === "/compare";
@@ -64,6 +67,13 @@ function App() {
       })
       .catch((err) => console.error("Failed to fetch sessions from DB:", err));
   }, [chat.sessionId, chat.hasInteracted]);
+
+  React.useEffect(() => {
+    api
+      .fetchTierProfiles()
+      .then((profiles) => setTierProfiles(profiles))
+      .catch((err) => console.error("Failed to fetch tier profiles:", err));
+  }, [setTierProfiles]);
 
   React.useEffect(() => {
     const stored = localStorage.getItem("ui-theme");
@@ -256,10 +266,10 @@ function App() {
                 <div className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white/50 px-3 text-xs font-semibold text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-800/50 dark:text-zinc-300">
                   <span
                     className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: TIERS[chat.currentTier].color }}
+                    style={{ backgroundColor: tiers[chat.currentTier].color }}
                   />
                   <span className="tracking-wide">
-                    {TIERS[chat.currentTier].name}
+                    {tiers[chat.currentTier].name}
                   </span>
                 </div>
               )}

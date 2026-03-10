@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { TIERS, TIER_ORDER } from "@/lib/constants";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import { cn } from "@/lib/utils";
 import type { Tier } from "@/types";
 
@@ -17,6 +17,7 @@ export function TierShowcase({
   compact = false,
 }: TierShowcaseProps) {
   const highlighted = new Set(highlightedTiers ?? []);
+  const { tiers, tierOrder } = useTierCatalog();
 
   return (
     <div
@@ -26,8 +27,8 @@ export function TierShowcase({
       )}
     >
       <div className="grid grid-cols-1 divide-y divide-slate-200/80 sm:grid-cols-2 sm:divide-x sm:divide-y-0 dark:divide-white/10">
-      {TIER_ORDER.map((tier) => {
-        const config = TIERS[tier];
+      {tierOrder.map((tier) => {
+        const config = tiers[tier];
         const isHighlighted = highlighted.size === 0 || highlighted.has(tier);
 
         return (

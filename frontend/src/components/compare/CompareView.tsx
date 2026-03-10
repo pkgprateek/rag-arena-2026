@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TIERS, TIER_ORDER } from "@/lib/constants";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import type { Tier, TierResult, TierConfig } from "@/types";
 
 function TierCard({ config }: { config: TierConfig }) {
@@ -100,10 +100,11 @@ export function CompareView({
   isDraggingOver = false,
 }: CompareViewProps) {
   const [mode, setMode] = useState<"two" | "all">("two");
+  const { tiers, tierOrder } = useTierCatalog();
 
   const results = Object.values(tierResults).filter((result) => result.run_id);
   const hasInteracted = results.length > 0;
-  const tiersToShow = mode === "all" ? TIER_ORDER : selectedTiers;
+  const tiersToShow = mode === "all" ? tierOrder : selectedTiers;
   const visibleTierSet = new Set(tiersToShow);
   const visibleResults = results.filter((result) =>
     visibleTierSet.has(result.tier),
@@ -163,7 +164,7 @@ export function CompareView({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="rounded-xl border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-zinc-900 text-xs shadow-xl">
-                {TIER_ORDER.map((tier) => (
+                {tierOrder.map((tier) => (
                   <SelectItem
                     key={tier}
                     value={tier}
@@ -177,12 +178,12 @@ export function CompareView({
                       <span
                         className="h-1.5 w-1.5 rounded-full shadow-[0_0_4px_currentColor]"
                         style={{
-                          backgroundColor: TIERS[tier].color,
-                          color: TIERS[tier].color,
+                          backgroundColor: tiers[tier].color,
+                          color: tiers[tier].color,
                         }}
                       />
                       <span className="font-medium text-[13px] tracking-tight">
-                        {TIERS[tier].name}
+                        {tiers[tier].name}
                       </span>
                     </span>
                   </SelectItem>
@@ -207,19 +208,19 @@ export function CompareView({
                 Architectural Comparison
               </span>
               <h2 className="text-[36px] font-medium tracking-tight text-balance text-slate-900 dark:text-zinc-50 sm:text-[44px] md:text-[52px] leading-[1.1]">
-                Evaluate retrieval precision.
+                Compare real RAG archetypes.
               </h2>
               <p className="mx-auto max-w-[640px] text-base leading-relaxed text-slate-600 dark:text-zinc-400">
-                Run identical queries across our retrieval architectures
-                simultaneously to evaluate accuracy, latency, and contextual
-                grounding side-by-side.
+                Run the same question across Starter, Plus, Enterprise, and
+                Modern to inspect answer quality, grounding, and retrieval
+                behavior side-by-side.
               </p>
             </div>
 
             {/* Tier Definition Cards */}
             <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200 ease-out fill-mode-both">
-              {TIER_ORDER.map((tier) => (
-                <TierCard key={tier} config={TIERS[tier]} />
+              {tierOrder.map((tier) => (
+                <TierCard key={tier} config={tiers[tier]} />
               ))}
             </div>
           </section>
@@ -251,15 +252,15 @@ export function CompareView({
                           <span
                             className="h-2 w-2 rounded-full"
                             style={{
-                              backgroundColor: TIERS[result.tier].color,
+                              backgroundColor: tiers[result.tier].color,
                             }}
                           />
                           <h3 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-zinc-50">
-                            {TIERS[result.tier].name}
+                            {tiers[result.tier].name}
                           </h3>
                         </div>
                         <p className="mt-1 text-xs leading-6 text-slate-500 dark:text-zinc-400">
-                          {TIERS[result.tier].description}
+                          {tiers[result.tier].description}
                         </p>
                       </div>
                       <Badge

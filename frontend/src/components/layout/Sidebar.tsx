@@ -22,8 +22,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import { useUIStore } from "@/stores/uiStore";
-import { TIERS, TIER_ORDER } from "@/lib/constants";
 import type { Tier } from "@/types";
 
 interface SidebarSession {
@@ -61,6 +61,7 @@ export function Sidebar({
   isComparePage,
 }: SidebarProps) {
   const ui = useUIStore();
+  const { tiers, tierOrder } = useTierCatalog();
 
   return (
     <div
@@ -138,7 +139,7 @@ export function Sidebar({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56 rounded-xl border-slate-200 bg-white p-1.5 shadow-xl dark:border-white/[0.08] dark:bg-zinc-900">
-              {TIER_ORDER.map((tier) => (
+              {tierOrder.map((tier) => (
                 <DropdownMenuItem
                   key={tier}
                   onClick={() => onNewChatWithTier(tier)}
@@ -147,9 +148,9 @@ export function Sidebar({
                   <span className="flex items-center gap-2.5">
                     <span
                       className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: TIERS[tier].color }}
+                      style={{ backgroundColor: tiers[tier].color }}
                     />
-                    {TIERS[tier].name}
+                    {tiers[tier].name}
                   </span>
                 </DropdownMenuItem>
               ))}
