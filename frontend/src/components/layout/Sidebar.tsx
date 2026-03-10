@@ -2,7 +2,6 @@
 
 import {
   PanelLeft,
-  Sparkles,
   SquarePen,
   GitCompareArrows,
   BarChart3,
@@ -84,8 +83,8 @@ export function Sidebar({
                 className="h-8 w-8 flex flex-shrink-0 items-center justify-center rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
                 title="Go to home"
               >
-                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-orange-400 to-amber-600 text-white shadow-sm transition-opacity hover:opacity-90">
-                  <Sparkles className="h-4 w-4" />
+                <div className="flex shrink-0 items-center justify-center p-0.5 transition-opacity hover:opacity-90">
+                  <img src="/logo.svg" alt="Logo" className="h-6 w-auto" />
                 </div>
               </button>
             </>
@@ -96,8 +95,8 @@ export function Sidebar({
                 className="flex items-center gap-2.5 rounded-md pl-1 transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50"
                 title="Go to home"
               >
-                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-orange-400 to-amber-600 text-white shadow-sm">
-                  <Sparkles className="h-4 w-4" />
+                <div className="flex shrink-0 items-center justify-center p-0.5">
+                  <img src="/logo.svg" alt="Logo" className="h-6 w-auto" />
                 </div>
                 <span className="font-semibold text-[14px] tracking-tight text-slate-800 truncate dark:text-zinc-100">
                   RAG Arena

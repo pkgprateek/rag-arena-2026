@@ -35,8 +35,8 @@ export const useChatStore = create<ChatState>((set) => ({
     sessionId: generateSessionId(),
     messages: [],
     currentTier: "starter",
-    currentModel: "",
-    availableModels: [],
+    currentModel: "Claude 3.5 Sonnet",
+    availableModels: ["Claude 3.5 Sonnet", "GPT-4o", "Gemini 1.5 Pro"],
     isStreaming: false,
     hasInteracted: false,
 

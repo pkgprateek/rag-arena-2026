@@ -112,30 +112,37 @@ export function MessageComposer({
                 <DropdownMenuTrigger asChild>
                   <button
                     disabled={disabled}
-                    className="flex h-8 items-center gap-1.5 rounded-full px-3 text-slate-600 transition-colors hover:bg-slate-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                    className="group flex h-8 items-center gap-1.5 rounded-full border border-slate-200/60 bg-white/50 px-3 text-slate-600 shadow-sm backdrop-blur transition-all hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1 dark:border-white/10 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                   >
-                    <span className="max-w-[120px] truncate text-[13px] font-medium">
+                    <span className="max-w-[120px] truncate text-[13px] font-medium tracking-tight">
                       {currentModel.split("/").pop()?.replace(/-versatile$/, "")}
                     </span>
-                    <ChevronDown className="h-4 w-4 opacity-70" />
+                    <ChevronDown className="h-3.5 w-3.5 opacity-50 transition-opacity group-hover:opacity-100" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="start"
-                  className="bg-white border-slate-200 min-w-[240px] dark:bg-zinc-900 dark:border-white/[0.08]"
+                  sideOffset={8}
+                  className="min-w-[200px] overflow-hidden rounded-xl border-slate-200/60 bg-white/95 p-1 shadow-lg backdrop-blur-md dark:border-white/10 dark:bg-zinc-900/95"
                 >
-                  {models.map((model) => (
-                    <DropdownMenuItem
-                      key={model}
-                      onClick={() => onModelChange(model)}
-                      className={`text-xs font-mono cursor-pointer ${model === currentModel
-                        ? "text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-500/10"
-                        : "text-slate-700 dark:text-zinc-300"
-                        }`}
-                    >
-                      {model}
-                    </DropdownMenuItem>
-                  ))}
+                  <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-500">
+                    Models
+                  </div>
+                  {models.map((model) => {
+                    const isSelected = model === currentModel;
+                    return (
+                      <DropdownMenuItem
+                        key={model}
+                        onClick={() => onModelChange(model)}
+                        className={`flex cursor-pointer items-center justify-between overflow-hidden rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors ${isSelected
+                          ? "bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-200"
+                          }`}
+                      >
+                        <span className="truncate">{model.split("/").pop()?.replace(/-versatile$/, "")}</span>
+                      </DropdownMenuItem>
+                    );
+                  })}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
