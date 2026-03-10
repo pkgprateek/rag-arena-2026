@@ -33,7 +33,7 @@ export function DocsDrawer({
 }: DocsDrawerProps) {
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
-            <SheetContent className="w-[340px] bg-slate-50 border-slate-200 p-0 overflow-y-auto dark:bg-[#202123] dark:border-white/[0.06] font-sans">
+            <SheetContent className="w-[310px] bg-slate-50 border-slate-200 p-0 overflow-y-auto dark:bg-[#202123] dark:border-white/[0.06] font-sans">
                 <SheetHeader className="p-4 pb-0">
                     <SheetTitle className="text-sm font-semibold text-slate-800 dark:text-zinc-200">
                         Document Sources
