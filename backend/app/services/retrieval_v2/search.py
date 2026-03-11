@@ -15,6 +15,7 @@ from app.tier_profiles import get_tier_runtime_profile
 logger = logging.getLogger(__name__)
 
 _RERANKER = None
+_RERANKER_MODEL_NAME = ""
 _STOPWORDS = {
     "a",
     "an",
@@ -68,16 +69,18 @@ class RetrievalOutcome:
 
 
 def _get_reranker():
-    global _RERANKER
-    if _RERANKER is None:
+    global _RERANKER, _RERANKER_MODEL_NAME
+    from app.config import settings
+
+    if _RERANKER is None or _RERANKER_MODEL_NAME != settings.reranker_model:
         try:
             logger.info(
                 "Initializing reranker model (download may occur on first run)..."
             )
             from FlagEmbedding import FlagReranker
-            from app.config import settings
 
             _RERANKER = FlagReranker(settings.reranker_model, use_fp16=True)
+            _RERANKER_MODEL_NAME = settings.reranker_model
             logger.info("Reranker '%s' loaded successfully.", settings.reranker_model)
         except ImportError:
             logger.warning(

@@ -11,8 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.redis_client import close_redis
-from app.routes import chat, compare, config, docs, runs, stream
-from app.db.database import init_db
+from app.routes import chat, compare, config, docs, runs, settings as settings_route, stream
+from app.db.database import AsyncSessionLocal, init_db
+from app.services.runtime_models import bootstrap_runtime_models, get_enabled_chat_models
+from app.services.runtime_settings import bootstrap_runtime_settings
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialize SQLite tables
     try:
         await init_db()
+        async with AsyncSessionLocal() as session:
+            await bootstrap_runtime_settings(session)
+            await bootstrap_runtime_models(session)
         logger.info("SQLite database initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize SQLite db: {e}")
@@ -64,8 +69,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url, "http://localhost:5173"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Admin-Token"],
 )
 
 # --- Routes ---
@@ -75,6 +80,7 @@ app.include_router(config.router)
 app.include_router(stream.router)
 app.include_router(runs.router)
 app.include_router(docs.router)
+app.include_router(settings_route.router)
 
 
 @app.get("/health")
@@ -85,6 +91,6 @@ async def health() -> dict:
 @app.get("/models")
 async def list_models() -> dict:
     """Return available models and the default."""
-    models = settings.get_available_models()
-    default = settings.get_default_model()
+    async with AsyncSessionLocal() as session:
+        models, default = await get_enabled_chat_models(session)
     return {"models": models, "default": default}

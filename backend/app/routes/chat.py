@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
-from app.config import settings
 from app.models import (
     ChatSendRequest,
     ChatSendResponse,
@@ -21,6 +20,7 @@ from app.redis_client import get_redis
 from app.services.pipeline import run_pipeline
 from app.db.database import get_db
 from app.db.models import DBSession, DBMessage
+from app.services.runtime_models import resolve_chat_model
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -115,19 +115,8 @@ async def chat_send(
         )
 
     # Resolve and validate model
-    model = req.model or settings.get_default_model()
-    if not model:
-        raise HTTPException(
-            status_code=400,
-            detail="No model configured. Set AVAILABLE_MODELS in .env",
-        )
-
-    available = settings.get_available_models()
-    if available and model not in available:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model}' is not available. Options: {available}",
-        )
+    selection = await resolve_chat_model(db, req.model)
+    model = selection.public_name
 
     # Ensure session exists in DB
     db_session = await db.get(DBSession, req.session_id)

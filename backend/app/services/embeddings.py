@@ -1,12 +1,20 @@
-"""RAG Arena 2026 — Fast API-based Embeddings.
+"""OpenRouter-backed embeddings client."""
 
-Replaces local sentence-transformers with remote API calls (Google/OpenRouter)
-to prevent blocking the main FastAPI thread and improve overall system speed.
-"""
+from __future__ import annotations
 
 import logging
+
 import httpx
+
 from app.config import settings
+from app.db.database import AsyncSessionLocal
+from app.services.openrouter import (
+    OPENROUTER_BASE_URL,
+    build_embedding_payload,
+    normalize_model_spec,
+    openrouter_headers,
+)
+from app.services.runtime_models import get_model_for_capability
 
 logger = logging.getLogger(__name__)
 
@@ -15,60 +23,46 @@ class APIEmbedder:
     def __init__(self, model_name: str = ""):
         self.model_name = model_name or settings.embedding_model
 
+    async def _resolve_model_name(self) -> str:
+        async with AsyncSessionLocal() as session:
+            runtime_model = await get_model_for_capability(session, "embeddings")
+        if runtime_model is not None:
+            return runtime_model.model_slug
+        return normalize_model_spec(self.model_name)
+
     async def encode(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
-        provider = "google"
-        if "/" in self.model_name or "openai" in self.model_name.lower():
-            provider = "openrouter"
-
-        api_key = (
-            settings.google_ai_studio_api_key
-            if provider == "google"
-            else settings.openrouter_api_key
-        )
-        base_url = (
-            "https://generativelanguage.googleapis.com/v1beta/openai"
-            if provider == "google"
-            else "https://openrouter.ai/api/v1"
-        )
-
-        if not api_key:
-            logger.error(f"No API key configured for {provider} embeddings!")
+        if not settings.openrouter_api_key:
+            logger.error("No OpenRouter API key configured for embeddings.")
             return [[0.0] * 768 for _ in texts]
 
-        logger.debug(f"Calling embedding API for {len(texts)} chunks via {provider}")
+        model_name = await self._resolve_model_name()
+        logger.debug("Calling OpenRouter embedding API for %s chunks", len(texts))
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 res = await client.post(
-                    f"{base_url}/embeddings",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"model": self.model_name, "input": texts},
+                    f"{OPENROUTER_BASE_URL}/embeddings",
+                    headers=openrouter_headers(),
+                    json=build_embedding_payload(model_slug=model_name, texts=texts),
                 )
                 res.raise_for_status()
                 data = res.json()
-
-                # Sort by index to maintain order just in case
                 items = data.get("data", [])
-                items.sort(key=lambda x: x.get("index", 0))
-
+                items.sort(key=lambda item: item.get("index", 0))
                 return [item.get("embedding", []) for item in items]
-        except Exception as e:
-            logger.error(f"Embedding API failed ({provider}): {e}")
-            if hasattr(e, "response") and e.response:
-                logger.error(f"Response: {e.response.text}")
+        except Exception as exc:
+            logger.error("Embedding API failed via OpenRouter: %s", exc)
+            if hasattr(exc, "response") and exc.response is not None:
+                logger.error("Response: %s", exc.response.text)
             return [[0.0] * 768 for _ in texts]
 
 
-_INSTANCE = None
+_INSTANCE: APIEmbedder | None = None
 
 
 def get_embedder() -> APIEmbedder:
-    """Get the singleton API embedder instance."""
     global _INSTANCE
     if _INSTANCE is None:
         _INSTANCE = APIEmbedder()
