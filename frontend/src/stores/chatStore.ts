@@ -35,8 +35,8 @@ export const useChatStore = create<ChatState>((set) => ({
     sessionId: generateSessionId(),
     messages: [],
     currentTier: "starter",
-    currentModel: "Claude 3.5 Sonnet",
-    availableModels: ["Claude 3.5 Sonnet", "GPT-4o", "Gemini 1.5 Pro"],
+    currentModel: "",
+    availableModels: [],
     isStreaming: false,
     hasInteracted: false,
 
@@ -45,8 +45,10 @@ export const useChatStore = create<ChatState>((set) => ({
     setAvailableModels: (models) =>
         set((s) => ({
             availableModels: models,
-            // Auto-select first model if none selected
-            currentModel: s.currentModel || models[0] || "",
+            currentModel:
+                s.currentModel && models.includes(s.currentModel)
+                    ? s.currentModel
+                    : models[0] || "",
         })),
 
     addMessage: (msg) =>

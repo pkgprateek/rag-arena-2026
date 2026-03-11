@@ -82,6 +82,9 @@ interface CompareViewProps {
   onSelectedTiersChange: (tiers: Tier[]) => void;
   onRunCompare: (message: string) => void;
   isRunning: boolean;
+  models?: string[];
+  currentModel?: string;
+  onModelChange?: (model: string) => void;
   stagedFiles?: File[];
   onAttach?: () => void;
   onRemoveStagedFile?: (idx: number) => void;
@@ -94,6 +97,9 @@ export function CompareView({
   onSelectedTiersChange,
   onRunCompare,
   isRunning,
+  models,
+  currentModel,
+  onModelChange,
   stagedFiles = [],
   onAttach,
   onRemoveStagedFile,
@@ -311,6 +317,9 @@ export function CompareView({
         }
         centered={false}
         customControls={renderConfigControls()}
+        models={models}
+        currentModel={currentModel}
+        onModelChange={onModelChange}
         stagedFiles={stagedFiles}
         onAttach={onAttach}
         onRemoveStagedFile={onRemoveStagedFile}

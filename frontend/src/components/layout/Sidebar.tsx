@@ -226,11 +226,19 @@ export function Sidebar({
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-0 mt-3">
+          {!ui.isSidebarCollapsed && (
+            <div className="px-2 pb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-600">
+                History
+              </p>
+            </div>
+          )}
           {sessions.slice(0, 8).map((session) => (
             <Tooltip key={session.id}>
               <TooltipTrigger asChild>
                 <div
                   className={`
+                                        group
                                         w-full rounded-md px-2 py-1.5 text-xs transition-all
                                         ${session.id === currentSessionId
                       ? "bg-slate-200/50 text-slate-900 dark:bg-white/10 dark:text-zinc-100"
