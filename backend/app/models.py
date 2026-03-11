@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def _utcnow() -> datetime:
@@ -247,8 +247,8 @@ class RuntimeAppSettings(BaseModel):
     reranker_model_slug: str
     langextract_model_slug: str
     semantic_cache_enabled: bool
-    semantic_cache_ttl: int
-    semantic_cache_threshold: float
+    semantic_cache_ttl: int = Field(ge=0)
+    semantic_cache_threshold: float = Field(ge=0.0, le=1.0)
     calcom_link: str
 
 
@@ -258,9 +258,31 @@ class UpdateRuntimeAppSettingsRequest(BaseModel):
     reranker_model_slug: str | None = None
     langextract_model_slug: str | None = None
     semantic_cache_enabled: bool | None = None
-    semantic_cache_ttl: int | None = None
-    semantic_cache_threshold: float | None = None
+    semantic_cache_ttl: int | None = Field(default=None, ge=0)
+    semantic_cache_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     calcom_link: str | None = None
+
+    @field_validator(
+        "default_chat_model_slug",
+        "embedding_model_slug",
+        "reranker_model_slug",
+        "langextract_model_slug",
+    )
+    @classmethod
+    def strip_non_empty_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Value cannot be empty")
+        return stripped
+
+    @field_validator("calcom_link")
+    @classmethod
+    def strip_optional_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
 
 
 # ---------------------------------------------------------------------------

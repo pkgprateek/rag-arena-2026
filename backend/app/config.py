@@ -4,6 +4,19 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BOOTSTRAP_CHAT_MODELS = (
+    "openrouter/openai/gpt-oss-20b",
+    "openrouter/openai/gpt-oss-120b",
+)
+BOOTSTRAP_DEFAULT_CHAT_MODEL = "openrouter/openai/gpt-oss-20b"
+BOOTSTRAP_EMBEDDING_MODEL = "openrouter/openai/text-embedding-3-small"
+BOOTSTRAP_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+BOOTSTRAP_LANGEXTRACT_MODEL = "openrouter/openai/gpt-oss-20b"
+BOOTSTRAP_SEMANTIC_CACHE_ENABLED = True
+BOOTSTRAP_SEMANTIC_CACHE_TTL = 3600
+BOOTSTRAP_SEMANTIC_CACHE_THRESHOLD = 0.92
+BOOTSTRAP_CALCOM_LINK = "https://cal.com/your-username"
+
 
 class Settings(BaseSettings):
     """Application-wide settings, loaded from environment / .env."""
@@ -22,10 +35,9 @@ class Settings(BaseSettings):
     admin_settings_token: str = ""
     environment: str = "development"
 
-    # --- Models ---
-    # Bootstrap-only seed list. Runtime DB state becomes authoritative after init.
-    available_models: str = ""
-    default_model: str = ""
+    # --- Runtime-controlled model state ---
+    # These values are mutated from runtime settings after boot.
+    default_model: str = BOOTSTRAP_DEFAULT_CHAT_MODEL
 
     # --- Redis & Services ---
     redis_url: str = "redis://localhost:6379/0"
@@ -33,48 +45,25 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:////app/data/rag_arena.db"
     uploads_dir: str = "/app/data/uploads"
 
-    # --- Embedding & Reranking Models ---
-    # OpenRouter-backed embedding model fallback when DB config has none.
-    embedding_model: str = "openrouter/openai/text-embedding-3-small"
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    # --- Runtime-controlled retrieval models ---
+    embedding_model: str = BOOTSTRAP_EMBEDDING_MODEL
+    reranker_model: str = BOOTSTRAP_RERANKER_MODEL
     unstructured_api_key: str = ""
 
-    # --- LangExtract (Modern-tier metadata enrichment) ---
-    langextract_model: str = "openrouter/google/gemini-2.0-flash"
+    # --- Runtime-controlled LangExtract model ---
+    langextract_model: str = BOOTSTRAP_LANGEXTRACT_MODEL
 
     # --- Semantic Cache (Tier 4) ---
-    semantic_cache_enabled: bool = True
-    semantic_cache_ttl: int = 3600  # seconds, 0 = disabled
-    semantic_cache_threshold: float = 0.92  # cosine similarity threshold
+    semantic_cache_enabled: bool = BOOTSTRAP_SEMANTIC_CACHE_ENABLED
+    semantic_cache_ttl: int = BOOTSTRAP_SEMANTIC_CACHE_TTL  # seconds, 0 = disabled
+    semantic_cache_threshold: float = BOOTSTRAP_SEMANTIC_CACHE_THRESHOLD
 
     # --- Server ---
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
     frontend_url: str = "http://localhost:5173"
 
-    # --- Optional ---
-    calcom_link: str = "https://cal.com/your-username"
-
-    def get_available_models(self) -> list[str]:
-        """Return list of configured models, deduped."""
-        if not self.available_models:
-            return []
-
-        seen: set[str] = set()
-        result: list[str] = []
-        for m in self.available_models.split(","):
-            m = m.strip()
-            if m and m not in seen:
-                seen.add(m)
-                result.append(m)
-        return result
-
-    def get_default_model(self) -> str:
-        """Return the default model (first in AVAILABLE_MODELS if not set)."""
-        if self.default_model:
-            return self.default_model
-        models = self.get_available_models()
-        return models[0] if models else ""
-
+    # --- Runtime-controlled optional settings ---
+    calcom_link: str = BOOTSTRAP_CALCOM_LINK
 
 settings = Settings()

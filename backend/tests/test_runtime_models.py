@@ -5,6 +5,7 @@ import importlib.util
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
@@ -35,7 +36,6 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
         if importlib.util.find_spec("greenlet") is None:
             self.skipTest("greenlet is not installed in this environment")
         self._settings_backup = {
-            "available_models": settings.available_models,
             "default_model": settings.default_model,
             "langextract_model": settings.langextract_model,
             "embedding_model": settings.embedding_model,
@@ -45,11 +45,8 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             "semantic_cache_threshold": settings.semantic_cache_threshold,
             "calcom_link": settings.calcom_link,
         }
-        settings.available_models = (
-            "openrouter/google/gemini-2.5-flash,openrouter/anthropic/claude-3.7-sonnet"
-        )
-        settings.default_model = "openrouter/google/gemini-2.5-flash"
-        settings.langextract_model = "openrouter/google/gemini-2.5-flash"
+        settings.default_model = "openrouter/openai/gpt-oss-20b"
+        settings.langextract_model = "openrouter/openai/gpt-oss-20b"
         settings.embedding_model = "openrouter/openai/text-embedding-3-small"
         settings.reranker_model = "BAAI/bge-reranker-v2-m3"
         settings.semantic_cache_enabled = True
@@ -81,22 +78,27 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             await bootstrap_runtime_models(session)
             models, default = await get_enabled_chat_models(session)
             selection = await resolve_chat_model(session, "")
+            constrained = await resolve_chat_model(session, "openai/gpt-oss-120b")
 
-        self.assertIn("google/gemini-2.5-flash", models)
-        self.assertEqual(default, "google/gemini-2.5-flash")
-        self.assertEqual(selection.runtime_model.model_slug, "google/gemini-2.5-flash")
+        self.assertIn("openai/gpt-oss-20b", models)
+        self.assertIn("openai/gpt-oss-120b", models)
+        self.assertEqual(default, "openai/gpt-oss-20b")
+        self.assertEqual(selection.runtime_model.model_slug, "openai/gpt-oss-20b")
+        self.assertEqual(selection.runtime_model.provider_preferences.sort, "price")
+        self.assertEqual(
+            constrained.runtime_model.provider_preferences.only,
+            ["atlas-cloud/fp8", "google-vertex"],
+        )
 
     async def test_disable_default_promotes_next_chat_model(self) -> None:
         async with self.session_factory() as session:
             await bootstrap_runtime_models(session)
             original = await resolve_chat_model(session, "")
-            second = await resolve_chat_model(
-                session, "anthropic/claude-3.7-sonnet"
-            )
+            second = await resolve_chat_model(session, "openai/gpt-oss-120b")
             await disable_runtime_model(session, original.runtime_model.id)
             models, default = await get_enabled_chat_models(session)
 
-        self.assertNotIn("google/gemini-2.5-flash", models)
+        self.assertNotIn("openai/gpt-oss-20b", models)
         self.assertEqual(default, second.public_name)
 
     async def test_create_runtime_model_rejects_strict_provider_without_order(self) -> None:
@@ -127,7 +129,7 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             await bootstrap_runtime_models(session)
 
             initial = await get_runtime_app_settings(session)
-            self.assertEqual(initial.default_chat_model_slug, "google/gemini-2.5-flash")
+            self.assertEqual(initial.default_chat_model_slug, "openai/gpt-oss-20b")
             self.assertEqual(
                 initial.embedding_model_slug, "openai/text-embedding-3-small"
             )
@@ -136,7 +138,7 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             updated = await update_runtime_app_settings(
                 session,
                 UpdateRuntimeAppSettingsRequest(
-                    default_chat_model_slug="anthropic/claude-3.7-sonnet",
+                    default_chat_model_slug="openai/gpt-oss-120b",
                     semantic_cache_enabled=False,
                     semantic_cache_ttl=120,
                     semantic_cache_threshold=0.88,
@@ -145,13 +147,57 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             )
             models, default = await get_enabled_chat_models(session)
 
-        self.assertIn("anthropic/claude-3.7-sonnet", models)
-        self.assertEqual(default, "anthropic/claude-3.7-sonnet")
+        self.assertIn("openai/gpt-oss-120b", models)
+        self.assertEqual(default, "openai/gpt-oss-120b")
         self.assertEqual(updated.default_chat_model_slug, default)
         self.assertFalse(updated.semantic_cache_enabled)
         self.assertEqual(updated.semantic_cache_ttl, 120)
         self.assertEqual(updated.semantic_cache_threshold, 0.88)
         self.assertEqual(updated.calcom_link, "https://cal.example.com/new-link")
+
+    async def test_runtime_settings_bootstrap_keeps_existing_db_values(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_settings(session)
+            await update_runtime_app_settings(
+                session,
+                UpdateRuntimeAppSettingsRequest(
+                    reranker_model_slug="custom/reranker-v1",
+                    semantic_cache_ttl=42,
+                ),
+            )
+
+            settings.reranker_model = "BAAI/changed-at-restart"
+            settings.semantic_cache_ttl = 999
+
+            await bootstrap_runtime_settings(session)
+            current = await get_runtime_app_settings(session)
+
+        self.assertEqual(current.reranker_model_slug, "custom/reranker-v1")
+        self.assertEqual(current.semantic_cache_ttl, 42)
+
+    async def test_runtime_settings_reject_invalid_numeric_ranges(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_settings(session)
+            await bootstrap_runtime_models(session)
+
+            with self.assertRaises(ValidationError):
+                UpdateRuntimeAppSettingsRequest(semantic_cache_ttl=-1)
+
+            with self.assertRaises(ValidationError):
+                UpdateRuntimeAppSettingsRequest(semantic_cache_threshold=1.1)
+
+    async def test_runtime_settings_reject_embedding_assignment_without_capability(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_settings(session)
+            await bootstrap_runtime_models(session)
+
+            with self.assertRaises(HTTPException):
+                await update_runtime_app_settings(
+                    session,
+                    UpdateRuntimeAppSettingsRequest(
+                        embedding_model_slug="openai/gpt-oss-20b"
+                    ),
+                )
 
     async def test_models_handler_returns_expected_shape(self) -> None:
         async with self.session_factory() as session:
@@ -165,10 +211,10 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             payload,
             {
                 "models": [
-                    "google/gemini-2.5-flash",
-                    "anthropic/claude-3.7-sonnet",
+                    "openai/gpt-oss-20b",
+                    "openai/gpt-oss-120b",
                 ],
-                "default": "google/gemini-2.5-flash",
+                "default": "openai/gpt-oss-20b",
             },
         )
 

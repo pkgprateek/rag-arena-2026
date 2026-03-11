@@ -12,7 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
+from app.config import (
+    BOOTSTRAP_CHAT_MODELS,
+    BOOTSTRAP_DEFAULT_CHAT_MODEL,
+    BOOTSTRAP_EMBEDDING_MODEL,
+    BOOTSTRAP_LANGEXTRACT_MODEL,
+    settings,
+)
 from app.db.models import DBRuntimeModel, DBRuntimeModelRouting, DBRuntimeSetting
 from app.models import (
     CreateRuntimeModelRequest,
@@ -129,18 +135,21 @@ def _sorted_enabled_chat_rows(rows: list[DBRuntimeModel]) -> list[DBRuntimeModel
 
 
 def _seed_candidates() -> list[CreateRuntimeModelRequest]:
-    models: list[str] = []
-    if settings.available_models:
-        models.extend(m.strip() for m in settings.available_models.split(","))
-    if settings.langextract_model:
-        models.append(settings.langextract_model)
-    if settings.embedding_model:
-        models.append(settings.embedding_model)
+    models: list[str] = list(BOOTSTRAP_CHAT_MODELS)
+    models.append(BOOTSTRAP_LANGEXTRACT_MODEL)
+    models.append(BOOTSTRAP_EMBEDDING_MODEL)
 
     normalized: dict[str, CreateRuntimeModelRequest] = {}
-    default_slug = normalize_model_spec(settings.default_model)
-    langextract_slug = normalize_model_spec(settings.langextract_model)
-    embedding_slug = normalize_model_spec(settings.embedding_model)
+    default_slug = normalize_model_spec(BOOTSTRAP_DEFAULT_CHAT_MODEL)
+    langextract_slug = normalize_model_spec(BOOTSTRAP_LANGEXTRACT_MODEL)
+    embedding_slug = normalize_model_spec(BOOTSTRAP_EMBEDDING_MODEL)
+
+    special_routing: dict[str, ProviderPreferences] = {
+        "openai/gpt-oss-20b": ProviderPreferences(sort="price"),
+        "openai/gpt-oss-120b": ProviderPreferences(
+            only=["atlas-cloud/fp8", "google-vertex"]
+        ),
+    }
 
     for raw in models:
         slug = normalize_model_spec(raw)
@@ -160,6 +169,7 @@ def _seed_candidates() -> list[CreateRuntimeModelRequest]:
                 supports_eval=slug != embedding_slug,
                 supports_langextract=slug == langextract_slug,
                 supports_embeddings=slug == embedding_slug,
+                provider_preferences=special_routing.get(slug, ProviderPreferences()),
             )
             normalized[slug] = current
             continue
@@ -184,47 +194,79 @@ def _seed_candidates() -> list[CreateRuntimeModelRequest]:
 
 
 async def bootstrap_runtime_models(session: AsyncSession) -> None:
-    result = await session.execute(select(DBRuntimeModel.id).limit(1))
-    if result.scalar_one_or_none() is not None:
-        return
-
     seeds = _seed_candidates()
     if not seeds:
         logger.warning("Runtime model registry bootstrap skipped: no OpenRouter seed models configured.")
         return
 
+    result = await session.execute(_model_query())
+    existing_rows = {row.model_slug: row for row in result.scalars().all()}
+    created = 0
+
     for seed in seeds:
-        row = DBRuntimeModel(
-            id=uuid.uuid4().hex,
-            model_slug=seed.model_slug,
-            display_name=seed.display_name,
-            is_enabled=seed.is_enabled,
-            is_default=seed.is_default,
-            supports_chat=seed.supports_chat,
-            supports_eval=seed.supports_eval,
-            supports_langextract=seed.supports_langextract,
-            supports_embeddings=seed.supports_embeddings,
+        row = existing_rows.get(seed.model_slug)
+        if row is None:
+            row = DBRuntimeModel(
+                id=uuid.uuid4().hex,
+                model_slug=seed.model_slug,
+                display_name=seed.display_name,
+                is_enabled=seed.is_enabled,
+                is_default=False,
+                supports_chat=seed.supports_chat,
+                supports_eval=seed.supports_eval,
+                supports_langextract=seed.supports_langextract,
+                supports_embeddings=seed.supports_embeddings,
+            )
+            session.add(row)
+            created += 1
+        else:
+            row.display_name = seed.display_name
+            row.is_enabled = row.is_enabled or seed.is_enabled
+            row.supports_chat = row.supports_chat or seed.supports_chat
+            row.supports_eval = row.supports_eval or seed.supports_eval
+            row.supports_langextract = (
+                row.supports_langextract or seed.supports_langextract
+            )
+            row.supports_embeddings = (
+                row.supports_embeddings or seed.supports_embeddings
+            )
+
+        if row.routing is None:
+            row.routing = DBRuntimeModelRouting(
+                provider_order_json="[]",
+                allow_fallbacks=True,
+                require_parameters=True,
+            )
+        row.routing.provider_order_json = json.dumps(seed.provider_preferences.order)
+        row.routing.allow_fallbacks = seed.provider_preferences.allow_fallbacks
+        row.routing.require_parameters = seed.provider_preferences.require_parameters
+        row.routing.zdr = seed.provider_preferences.zdr
+        row.routing.only_providers_json = _serialize_json(seed.provider_preferences.only)
+        row.routing.ignore_providers_json = _serialize_json(
+            seed.provider_preferences.ignore
         )
-        row.routing = DBRuntimeModelRouting(
-            provider_order_json=json.dumps(seed.provider_preferences.order),
-            allow_fallbacks=seed.provider_preferences.allow_fallbacks,
-            require_parameters=seed.provider_preferences.require_parameters,
-            zdr=seed.provider_preferences.zdr,
-            only_providers_json=_serialize_json(seed.provider_preferences.only),
-            ignore_providers_json=_serialize_json(seed.provider_preferences.ignore),
-            sort=seed.provider_preferences.sort,
-            max_price_prompt=(seed.provider_preferences.max_price or {}).get("prompt"),
-            max_price_completion=(seed.provider_preferences.max_price or {}).get(
-                "completion"
-            ),
-        )
-        session.add(row)
+        row.routing.sort = seed.provider_preferences.sort
+        row.routing.max_price_prompt = (
+            seed.provider_preferences.max_price or {}
+        ).get("prompt")
+        row.routing.max_price_completion = (
+            seed.provider_preferences.max_price or {}
+        ).get("completion")
 
     await session.flush()
+    preferred_default = normalize_model_spec(BOOTSTRAP_DEFAULT_CHAT_MODEL) or "openai/gpt-oss-20b"
+    result = await session.execute(_model_query())
+    rows = result.scalars().all()
+    for row in rows:
+        row.is_default = row.model_slug == preferred_default and row.is_enabled and row.supports_chat
     await _ensure_default_chat_model(session)
     await _sync_default_chat_setting(session)
     await session.commit()
-    logger.info("Bootstrapped %s runtime model entries.", len(seeds))
+    logger.info(
+        "Bootstrapped runtime model registry. created=%s total_seeded=%s",
+        created,
+        len(seeds),
+    )
 
 
 async def list_runtime_models(session: AsyncSession) -> RuntimeModelsResponse:
