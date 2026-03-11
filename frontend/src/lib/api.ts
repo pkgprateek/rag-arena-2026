@@ -55,44 +55,6 @@ function withAdminHeaders(adminToken?: string): HeadersInit | undefined {
     return { "X-Admin-Token": adminToken };
 }
 
-function normalizeRuntimeAppSettings(settings: RuntimeAppSettings): RuntimeAppSettings {
-    return {
-        ...settings,
-        default_chat_model_slug:
-            settings.default_chat_model_slug || "",
-        embedding_model_slug:
-            settings.embedding_model_slug || settings.embedding_model || "",
-        reranker_model_slug:
-            settings.reranker_model_slug || settings.reranker_model || "",
-        langextract_model_slug:
-            settings.langextract_model_slug || settings.langextract_model || "",
-        semantic_cache_enabled:
-            settings.semantic_cache_enabled ?? (settings.semantic_cache_ttl ?? 0) > 0,
-        embedding_model:
-            settings.embedding_model || settings.embedding_model_slug || "",
-        reranker_model:
-            settings.reranker_model || settings.reranker_model_slug || "",
-        langextract_model:
-            settings.langextract_model || settings.langextract_model_slug || "",
-    };
-}
-
-function normalizeRuntimeAppSettingsUpdate(
-    request: UpdateRuntimeAppSettingsRequest,
-): UpdateRuntimeAppSettingsRequest {
-    return {
-        ...request,
-        default_chat_model_slug:
-            request.default_chat_model_slug,
-        embedding_model_slug:
-            request.embedding_model_slug || request.embedding_model,
-        reranker_model_slug:
-            request.reranker_model_slug || request.reranker_model,
-        langextract_model_slug:
-            request.langextract_model_slug || request.langextract_model,
-    };
-}
-
 export const api = {
     chatSend: (req: ChatSendRequest) =>
         post<ChatSendRequest, ChatSendResponse>("/chat/send", req),
@@ -250,27 +212,26 @@ export const api = {
             const text = await res.text().catch(() => "Failed to fetch app settings");
             throw new Error(`API ${res.status}: ${text}`);
         }
-        return normalizeRuntimeAppSettings(await res.json());
+        return res.json();
     },
 
     updateRuntimeAppSettings: async (
         request: UpdateRuntimeAppSettingsRequest,
         adminToken?: string,
     ): Promise<RuntimeAppSettings> => {
-        const normalizedRequest = normalizeRuntimeAppSettingsUpdate(request);
         const res = await fetchOrThrow(`${API_BASE}/settings/app`, {
             method: "PATCH",
             headers: {
                 "Content-Type": "application/json",
                 ...(withAdminHeaders(adminToken) || {}),
             },
-            body: JSON.stringify(normalizedRequest),
+            body: JSON.stringify(request),
         }, "Could not update app settings because the backend is unreachable.");
         if (!res.ok) {
             const text = await res.text().catch(() => "Failed to update app settings");
             throw new Error(`API ${res.status}: ${text}`);
         }
-        return normalizeRuntimeAppSettings(await res.json());
+        return res.json();
     },
 
     createRuntimeModel: async (

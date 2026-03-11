@@ -135,15 +135,11 @@ export interface SettingsModelsResponse {
 }
 
 export interface RuntimeAppSettings {
-    default_chat_model_slug?: string;
-    embedding_model_slug?: string;
-    reranker_model_slug?: string;
-    langextract_model_slug?: string;
-    semantic_cache_enabled?: boolean;
-    // Deprecated aliases kept temporarily so the unmounted settings page still type-checks.
-    embedding_model: string;
-    reranker_model: string;
-    langextract_model: string;
+    default_chat_model_slug: string;
+    embedding_model_slug: string;
+    reranker_model_slug: string;
+    langextract_model_slug: string;
+    semantic_cache_enabled: boolean;
     semantic_cache_ttl: number;
     semantic_cache_threshold: number;
     calcom_link: string;
@@ -155,10 +151,6 @@ export interface UpdateRuntimeAppSettingsRequest {
     reranker_model_slug?: string;
     langextract_model_slug?: string;
     semantic_cache_enabled?: boolean;
-    // Deprecated aliases kept temporarily so the unmounted settings page still type-checks.
-    embedding_model?: string;
-    reranker_model?: string;
-    langextract_model?: string;
     semantic_cache_ttl?: number;
     semantic_cache_threshold?: number;
     calcom_link?: string;

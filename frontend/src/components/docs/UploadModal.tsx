@@ -1,42 +1,27 @@
 // RAG Arena 2026 — Document Upload Modal (Global & Session scope)
 
 import { useRef, useState, useEffect } from "react";
-import { Upload, X, FileText, Trash2, Globe, MessageSquare, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Upload, X, FileText, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/uiStore";
-import { useChatStore } from "@/stores/chatStore";
-import { api } from "@/lib/api";
-
-interface UploadedDoc {
-    doc_id: string;
-    filename: string;
-    chunks: number;
-    scope: "global" | "session";
-}
 
 interface UploadModalProps {
-    globalDocs: UploadedDoc[];
-    sessionDocs: UploadedDoc[];
-    onDocUploaded: (doc: UploadedDoc) => void;
-    onDocRemoved: (docId: string) => void;
+    onStageSessionFiles: (files: File[]) => void;
+    onGlobalUploadQueued: (files: File[]) => void;
 }
 
 export function UploadModal({
-    globalDocs,
-    sessionDocs,
-    onDocUploaded,
-    onDocRemoved,
+    onStageSessionFiles,
+    onGlobalUploadQueued,
 }: UploadModalProps) {
     const ui = useUIStore();
-    const chat = useChatStore();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [isGlobal, setIsGlobal] = useState(false);
     const [dragging, setDragging] = useState(false);
-    const [uploading, setUploading] = useState(false);
     const [uploadResult, setUploadResult] = useState<{
-        type: "success" | "error";
+        type: "error";
         message: string;
     } | null>(null);
 
@@ -46,8 +31,6 @@ export function UploadModal({
             setIsGlobal(ui.uploadModalScope === "global");
         }
     }, [ui.isUploadModalOpen, ui.uploadModalScope]);
-
-    const allDocs = [...globalDocs, ...sessionDocs];
 
     const handleClose = () => {
         setPendingFiles([]);
@@ -89,62 +72,19 @@ export function UploadModal({
     };
 
     const handleUploadClick = async () => {
-        if (pendingFiles.length === 0 || uploading) return;
+        if (pendingFiles.length === 0) return;
         setUploadResult(null);
-        setUploading(true);
 
-        const activeScope = isGlobal ? "global" : "session";
-        let successCount = 0;
-        let failCount = 0;
-
-        try {
-            await Promise.all(
-                pendingFiles.map(async (file) => {
-                    try {
-                        const result = await api.uploadDoc(
-                            file,
-                            activeScope,
-                            activeScope === "session" ? chat.sessionId : ""
-                        );
-                        onDocUploaded({
-                            doc_id: result.doc_id,
-                            filename: result.filename,
-                            chunks: result.chunks,
-                            scope: activeScope,
-                        });
-                        successCount++;
-                    } catch {
-                        failCount++;
-                        throw new Error("Upload failed inside Promise.all");
-                    }
-                })
-            ).catch(() => {
-                // Ignore the throw, handled by counts
-            });
-
-            if (failCount === 0) {
-                setUploadResult({
-                    type: "success",
-                    message: `Successfully indexed ${successCount} document${successCount !== 1 ? 's' : ''}.`,
-                });
-                setPendingFiles([]);
-                if (fileInputRef.current) fileInputRef.current.value = "";
-            } else if (successCount > 0) {
-                setUploadResult({
-                    type: "error",
-                    message: `Indexed ${successCount} documents, but failed to upload ${failCount}.`,
-                });
-                setPendingFiles([]);
-                if (fileInputRef.current) fileInputRef.current.value = "";
-            } else {
-                setUploadResult({
-                    type: "error",
-                    message: `Failed to upload ${failCount} document${failCount !== 1 ? 's' : ''}.`,
-                });
-            }
-        } finally {
-            setUploading(false);
+        if (!isGlobal) {
+            onStageSessionFiles(pendingFiles);
+            handleClose();
+            return;
         }
+
+        const filesToUpload = [...pendingFiles];
+        handleClose();
+        ui.setDocsDrawerOpen(true);
+        onGlobalUploadQueued(filesToUpload);
     };
 
     if (!ui.isUploadModalOpen) return null;
@@ -167,7 +107,7 @@ export function UploadModal({
                     <div>
                         <h2 className="text-[15px] font-semibold tracking-tight text-slate-900 dark:text-zinc-50">Upload Documents</h2>
                         <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
-                            Starter indexes immediately. Plus, Enterprise, and Modern build their richer indexes on first query.
+                            Session docs attach to the prompt. Global docs start processing for the active tier immediately.
                         </p>
                     </div>
                     <Button
@@ -188,7 +128,7 @@ export function UploadModal({
                         onDrop={handleDrop}
                         onClick={() => {
                             // Only trigger picker natively if no files are pending
-                            if (!uploading && pendingFiles.length === 0) fileInputRef.current?.click();
+                            if (pendingFiles.length === 0) fileInputRef.current?.click();
                         }}
                         className={`
                             relative flex flex-col items-center justify-center
@@ -200,7 +140,6 @@ export function UploadModal({
                                     ? "border-orange-500/70 bg-orange-500/5 border-dashed cursor-copy"
                                     : "border-slate-300 hover:border-orange-500/40 hover:bg-slate-50 border-dashed cursor-pointer dark:border-white/10 dark:hover:bg-white/[0.02]"
                             }
-                            ${uploading ? "pointer-events-none opacity-50" : ""}
                         `}
                     >
                         <input
@@ -281,8 +220,7 @@ export function UploadModal({
                         {pendingFiles.length > 0 && (
                             <Button
                                 variant="outline"
-                                onClick={() => !uploading && fileInputRef.current?.click()}
-                                disabled={uploading}
+                                onClick={() => fileInputRef.current?.click()}
                                 className="w-full h-10 border-dashed border-2 border-slate-300 text-slate-600 hover:border-orange-500/40 hover:bg-slate-50 hover:text-orange-600 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:border-orange-500/40 dark:hover:text-orange-400 transition-all shadow-none"
                             >
                                 <Upload className="h-4 w-4 mr-2 opacity-70" />
@@ -297,7 +235,6 @@ export function UploadModal({
                                     checked={isGlobal}
                                     onChange={(e) => setIsGlobal(e.target.checked)}
                                     className="h-4 w-4 mt-0.5 bg-slate-50 rounded border-slate-300 text-orange-500 focus:ring-orange-500/30 dark:border-zinc-600 dark:bg-zinc-800 dark:checked:bg-orange-500 dark:checked:border-orange-500 transition-colors"
-                                    disabled={uploading}
                                 />
                                 <div className="flex flex-col">
                                     <span className="text-sm font-medium text-slate-800 dark:text-zinc-200">Save as Global Document{pendingFiles.length > 1 ? 's' : ''}</span>
@@ -308,73 +245,21 @@ export function UploadModal({
 
                         <Button
                             onClick={handleUploadClick}
-                            disabled={pendingFiles.length === 0 || uploading}
+                            disabled={pendingFiles.length === 0}
                             className={`w-full h-11 text-white transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed shadow-sm ${pendingFiles.length > 0 ? "bg-slate-900 hover:bg-slate-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white" : "bg-slate-300 dark:bg-white/10"}`}
                         >
-                            {uploading ? (
-                                <span className="flex items-center gap-2">
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                    Uploading {pendingFiles.length} file{pendingFiles.length > 1 ? 's' : ''}...
-                                </span>
-                            ) : (
-                                `Upload ${pendingFiles.length > 0 ? pendingFiles.length : ''} Document${pendingFiles.length !== 1 ? 's' : ''}`
-                            )}
+                            {`${isGlobal ? "Upload" : "Attach"} ${pendingFiles.length > 0 ? pendingFiles.length : ''} Document${pendingFiles.length !== 1 ? 's' : ''}`}
                         </Button>
                     </div>
 
                     {/* Upload result */}
                     {uploadResult ? (
-                        <div className={`flex items-start gap-2.5 rounded-xl px-4 py-3 text-xs font-medium border shadow-sm transition-all duration-300 animate-in fade-in slide-in-from-top-1 ${uploadResult.type === "success"
-                            ? "bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
-                            : "bg-red-50 border-red-200 text-red-800 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20"
-                            }`}>
-                            {uploadResult.type === "success"
-                                ? <CheckCircle2 className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                                : <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                            }
+                        <div className="flex items-start gap-2.5 rounded-xl px-4 py-3 text-xs font-medium border shadow-sm transition-all duration-300 animate-in fade-in slide-in-from-top-1 bg-red-50 border-red-200 text-red-800 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20">
+                            <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                             <span className="leading-snug">{uploadResult.message}</span>
                         </div>
                     ) : null}
 
-                    {/* Uploaded docs list */}
-                    {allDocs.length > 0 ? (
-                        <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-white/[0.04]">
-                            <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-zinc-500 font-semibold ml-1">
-                                Indexed documents
-                            </p>
-                            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                                {allDocs.map((doc) => (
-                                    <div
-                                        key={doc.doc_id}
-                                        className="group flex items-center gap-3 rounded-xl bg-slate-50/50 border border-slate-200/60 px-3.5 py-2.5 hover:bg-slate-50 hover:border-slate-300 transition-colors dark:bg-white/[0.01] dark:border-white/[0.04] dark:hover:bg-white/[0.02] dark:hover:border-white/[0.08]"
-                                    >
-                                        <div className={`p-1.5 rounded-md ${doc.scope === 'global' ? 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400' : 'bg-slate-200/50 text-slate-500 dark:bg-white/5 dark:text-zinc-400'}`}>
-                                            {doc.scope === 'global' ? (
-                                                <Globe className="h-3.5 w-3.5 flex-shrink-0" />
-                                            ) : (
-                                                <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
-                                            )}
-                                        </div>
-                                        <div className="flex flex-col flex-1 min-w-0">
-                                            <span className="text-xs font-medium text-slate-700 dark:text-zinc-200 truncate">
-                                                {doc.filename}
-                                            </span>
-                                            <span className="text-[10px] text-slate-400 dark:text-zinc-500 flex-shrink-0">
-                                                {doc.chunks} chunk{doc.chunks !== 1 ? 's' : ''} • {doc.scope === 'global' ? 'Global' : 'This Chat'}
-                                            </span>
-                                        </div>
-                                        <button
-                                            onClick={() => onDocRemoved(doc.doc_id)}
-                                            className="flex-shrink-0 ml-1 text-slate-400 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10"
-                                            title="Remove Document"
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ) : null}
                 </div>
             </div>
         </div>
