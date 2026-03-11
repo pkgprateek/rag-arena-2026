@@ -12,12 +12,10 @@ import json
 import logging
 import re
 import time
-from pathlib import Path
 from typing import Any
 
 import httpx
 
-from app.config import settings
 from app.models import (
     Citation,
     EvalResult,
@@ -28,7 +26,13 @@ from app.models import (
     Trace,
 )
 from app.redis_client import get_redis
+from app.services.openrouter import (
+    OPENROUTER_BASE_URL,
+    build_chat_payload,
+    openrouter_headers,
+)
 from app.services.retrieval_v2.search import retrieve_context
+from app.services.runtime_models import resolve_chat_model
 from app.services.streaming import publish_event
 from app.services.semantic_cache import cache_lookup, cache_store
 from app.db.database import AsyncSessionLocal
@@ -38,94 +42,25 @@ from app.tier_profiles import get_tier_runtime_profile
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Provider routing
+# OpenRouter cost table (USD per token)
 # ---------------------------------------------------------------------------
 
-
-def _parse_provider(model_spec: str) -> tuple[str, str]:
-    """Parse 'provider/model-name' → (provider, model_name).
-
-    Examples:
-      'groq/llama-3.3-70b-versatile' → ('groq', 'llama-3.3-70b-versatile')
-      'openrouter/google/gemini-3-pro' → ('openrouter', 'google/gemini-3-pro')
-      'llama-3.3-70b' → ('groq', 'llama-3.3-70b')  # default provider
-    """
-    if "/" in model_spec:
-        provider, model = model_spec.split("/", 1)
-        return provider.lower(), model
-    return "groq", model_spec
-
-
-def _get_api_config(provider: str) -> dict[str, Any]:
-    """Return base_url + api_key for a given provider."""
-    configs = {
-        "groq": {
-            "base_url": "https://api.groq.com/openai/v1",
-            "api_key": settings.groq_api_key,
-        },
-        "openrouter": {
-            "base_url": "https://openrouter.ai/api/v1",
-            "api_key": settings.openrouter_api_key,
-        },
-        "google": {
-            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-            "api_key": settings.google_ai_studio_api_key,
-        },
-    }
-    cfg = configs.get(provider)
-    if cfg is None:
-        raise ValueError(f"Unknown provider: {provider}")
-    if not cfg["api_key"]:
-        raise ValueError(
-            f"No API key configured for provider '{provider}'. "
-            f"Set the corresponding key in .env"
-        )
-    return cfg
-
-
-# ---------------------------------------------------------------------------
-# Per-provider cost tables (USD per token)
-# ---------------------------------------------------------------------------
-
-# Source: provider pricing pages as of 2026-03.
-# Format: { "model_substring": (input_cost_per_token, output_cost_per_token) }
-PROVIDER_COSTS: dict[str, dict[str, tuple[float, float]]] = {
-    "groq": {
-        "llama-3.3-70b": (0.00000059, 0.00000079),
-        "llama-3.1-8b": (0.00000005, 0.00000008),
-        "llama-3.1-70b": (0.00000059, 0.00000079),
-        "gemma2-9b": (0.00000020, 0.00000020),
-        "mixtral-8x7b": (0.00000024, 0.00000024),
-        "compound": (0.00000059, 0.00000079),  # compound-beta routing
-    },
-    "openrouter": {
-        "claude-3.5-sonnet": (0.000003, 0.000015),
-        "claude-3-haiku": (0.00000025, 0.00000125),
-        "gpt-4o": (0.0000025, 0.000010),
-        "gpt-4o-mini": (0.00000015, 0.0000006),
-        "gemini": (0.00000025, 0.000001),
-    },
-    "google": {
-        "gemini-2.0-flash": (0.0000001, 0.0000004),
-        "gemini-2.5-flash": (0.00000015, 0.0000006),
-        "gemini-2.5-pro": (0.00000125, 0.000010),
-        "gemini-3": (0.000002, 0.000008),
-    },
+PROVIDER_COSTS: dict[str, tuple[float, float]] = {
+    "claude-3.5-sonnet": (0.000003, 0.000015),
+    "claude-3-haiku": (0.00000025, 0.00000125),
+    "gpt-4o": (0.0000025, 0.000010),
+    "gpt-4o-mini": (0.00000015, 0.0000006),
+    "gemini": (0.00000025, 0.000001),
 }
 
 # Fallback if model not found in pricing table
 DEFAULT_COST = (0.000001, 0.000002)
 
 
-def _estimate_cost(
-    provider: str, model_name: str, prompt_tokens: int, completion_tokens: int
-) -> float:
-    """Estimate cost based on provider pricing tables."""
-    provider_table = PROVIDER_COSTS.get(provider, {})
-
-    # Find matching cost entry (substring match)
+def _estimate_cost(model_name: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Estimate cost based on OpenRouter pricing tables."""
     cost_entry = DEFAULT_COST
-    for pattern, costs in provider_table.items():
+    for pattern, costs in PROVIDER_COSTS.items():
         if pattern in model_name.lower():
             cost_entry = costs
             break
@@ -184,8 +119,7 @@ async def _run_llm_eval(
     question: str,
     answer: str,
     model: str,
-    provider: str,
-    api_config: dict[str, Any],
+    provider_preferences: Any | None,
 ) -> EvalResult | None:
     """Use a fast LLM call to evaluate answer quality.
 
@@ -211,23 +145,21 @@ Respond with ONLY a JSON object, no other text:
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
-                f"{api_config['base_url']}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_config['api_key']}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [
+                f"{OPENROUTER_BASE_URL}/chat/completions",
+                headers=openrouter_headers(),
+                json=build_chat_payload(
+                    model_slug=model,
+                    provider_preferences=provider_preferences,
+                    messages=[
                         {
                             "role": "system",
                             "content": "You are a strict evaluator. Output ONLY valid JSON.",
                         },
                         {"role": "user", "content": eval_prompt},
                     ],
-                    "temperature": 0.0,
-                    "max_tokens": 100,
-                },
+                    temperature=0.0,
+                    max_tokens=100,
+                ),
             )
             response.raise_for_status()
             data = response.json()
@@ -267,90 +199,61 @@ async def _ensure_tier_indexed(
     tier: Tier,
     stream_id: str,
     run_id: str,
+    session_id: str = "",
 ) -> None:
-    """Lazily ingest all known documents for the given tier if not already indexed.
-
-    Called before retrieval when the user first uses a non-STARTER tier.
-    Higher tiers may trigger richer parsing and enrichment on the FIRST query
-    for that tier. This is intentional so the ladder is defined by the tier the
-    user actually selected, not by upload-time shortcuts.
-    """
+    """Ensure all visible documents are ready for the selected tier."""
+    from app.models import DocTierState
     from app.services.retrieval_v2.store import store as vector_store
-    from app.services.ingestion.pipeline import ingest_document
-    from app.services.retrieval_v2.store import Document
 
-    # Gather base doc IDs from Starter tier (already indexed on upload)
-    starter_suffix = f"_{Tier.STARTER.value}"
-    tier_suffix = f"_{tier.value}"
-    needs_ingestion = []
+    tracked_docs = vector_store.list_tracked_documents(session_id)
+    if not tracked_docs:
+        return
 
-    for doc_id, doc in list(vector_store._docs.items()):
-        if doc_id.endswith(starter_suffix):
-            base_id = doc_id[: -len(starter_suffix)]
-            tier_doc_id = f"{base_id}{tier_suffix}"
-            if tier_doc_id not in vector_store._docs:
-                needs_ingestion.append((base_id, doc))
+    pending_tasks: list[tuple[str, asyncio.Task[None]]] = []
+    failures: list[str] = []
 
-    if not needs_ingestion:
-        return  # All docs already indexed for this tier
-
-    await publish_event(
-        stream_id,
-        StreamEvent(
-            event="status",
-            run_id=run_id,
-            tier=tier,
-            data=f"indexing_{tier.value}",
-        ),
-    )
-
-    for base_id, starter_doc in needs_ingestion:
-        tier_doc_id = f"{base_id}_{tier.value}"
-        try:
-            source_bytes: bytes
-            source_ext = starter_doc.source_ext or ".txt"
-
-            if starter_doc.source_path and Path(starter_doc.source_path).exists():
-                source_bytes = Path(starter_doc.source_path).read_bytes()
-            else:
-                fallback_text = "\n\n".join(c.content for c in starter_doc.chunks)
-                source_bytes = fallback_text.encode("utf-8")
-                source_ext = ".txt"
-
-            chunks = await ingest_document(
-                file_bytes=source_bytes,
-                filename=starter_doc.filename,
-                ext=source_ext,
-                doc_id=tier_doc_id,
-                tier=tier,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Lazy indexing failed for '%s' at tier %s: %s",
-                starter_doc.filename,
-                tier.value,
-                exc,
-            )
+    for tracked in tracked_docs:
+        state = tracked.tier_states.get(tier, DocTierState.DELETED)
+        if state == DocTierState.READY:
+            continue
+        if state == DocTierState.ERROR:
+            error = tracked.error_by_tier.get(tier) or "indexing failed"
+            failures.append(f"{tracked.filename}: {error}")
+            continue
+        if state == DocTierState.DELETED:
             continue
 
-        if chunks:
-            doc = Document(
-                id=tier_doc_id,
-                filename=starter_doc.filename,
-                chunks=chunks,
-                total_chars=starter_doc.total_chars,
-                scope=starter_doc.scope,
-                session_id=starter_doc.session_id,
-                source_ext=starter_doc.source_ext,
-                source_path=starter_doc.source_path,
-            )
-            vector_store.add_document(doc)
-            logger.info(
-                "Lazily indexed '%s' for tier %s (%d chunks)",
-                starter_doc.filename,
-                tier.value,
-                len(chunks),
-            )
+        task = vector_store.get_tier_task(tracked.doc_id, tier)
+        if task is None and state == DocTierState.QUEUED:
+            task = vector_store.start_tier_ingestion(tracked.doc_id, tier)
+        if task is not None:
+            pending_tasks.append((tracked.doc_id, task))
+
+    if pending_tasks:
+        await publish_event(
+            stream_id,
+            StreamEvent(
+                event="status",
+                run_id=run_id,
+                tier=tier,
+                data=f"indexing_{tier.value}",
+            ),
+        )
+        await asyncio.gather(
+            *(task for _doc_id, task in pending_tasks), return_exceptions=True
+        )
+
+    for tracked in vector_store.list_tracked_documents(session_id):
+        state = tracked.tier_states.get(tier, DocTierState.DELETED)
+        if state == DocTierState.ERROR:
+            error = tracked.error_by_tier.get(tier) or "indexing failed"
+            failures.append(f"{tracked.filename}: {error}")
+
+    if failures and vector_store.count_ready_documents(tier, session_id) == 0:
+        unique_failures = list(dict.fromkeys(failures))
+        raise RuntimeError(
+            f"No documents are ready for tier {tier.value}. Failed indexing: {'; '.join(unique_failures[:3])}"
+        )
 
 
 async def run_pipeline(
@@ -367,12 +270,32 @@ async def run_pipeline(
 
     All tiers share the same model. Differentiation comes from the tier profile.
     """
-    provider, model_name = _parse_provider(model)
-    api_config = _get_api_config(provider)
-    tier_profile = get_tier_runtime_profile(tier)
-
     run = Run(id=run_id, tier=tier, status=RunStatus.QUEUED)
     t_start = time.perf_counter()
+
+    try:
+        async with AsyncSessionLocal() as db_session:
+            selection = await resolve_chat_model(db_session, model)
+    except Exception as exc:
+        run.status = RunStatus.ERROR
+        await publish_event(
+            stream_id,
+            StreamEvent(
+                event="error",
+                run_id=run_id,
+                tier=tier,
+                data=str(exc)[:300],
+            ),
+        )
+        r = await get_redis()
+        run.answer = str(exc)[:300]
+        await r.set(f"run:{run_id}", run.model_dump_json(), ex=3600)
+        return run
+
+    runtime_model = selection.runtime_model
+    model_name = runtime_model.model_slug
+    provider_preferences = runtime_model.provider_preferences
+    tier_profile = get_tier_runtime_profile(tier)
 
     # --- SSE race condition fix ---
     await asyncio.sleep(0.15)
@@ -502,7 +425,7 @@ async def run_pipeline(
                     role="assistant",
                     content=cached_answer,
                     tier=tier.value,
-                    model=model_name,
+                    model=selection.public_name,
                     run_id=run_id,
                     citations_json=json.dumps(
                         [c.model_dump() for c in cached_citations]
@@ -524,7 +447,12 @@ async def run_pipeline(
     t_retrieval_start = time.perf_counter()
 
     if tier != Tier.STARTER:
-        await _ensure_tier_indexed(tier=tier, stream_id=stream_id, run_id=run_id)
+        await _ensure_tier_indexed(
+            tier=tier,
+            stream_id=stream_id,
+            run_id=run_id,
+            session_id=session_id,
+        )
 
     # Retrieve relevant chunks — session_id filters for session-scoped docs
     retrieval_outcome = retrieve_context(user_message, tier, session_id=session_id)
@@ -617,18 +545,16 @@ async def run_pipeline(
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream(
                 "POST",
-                f"{api_config['base_url']}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_config['api_key']}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model_name,
-                    "messages": messages,
-                    "stream": True,
-                    "temperature": tier_profile.generation_temperature,
-                    "max_tokens": tier_profile.generation_max_tokens,
-                },
+                f"{OPENROUTER_BASE_URL}/chat/completions",
+                headers=openrouter_headers(),
+                json=build_chat_payload(
+                    model_slug=model_name,
+                    provider_preferences=provider_preferences,
+                    messages=messages,
+                    stream=True,
+                    temperature=tier_profile.generation_temperature,
+                    max_tokens=tier_profile.generation_max_tokens,
+                ),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -718,8 +644,7 @@ async def run_pipeline(
         question=user_message,
         answer=full_answer,
         model=model_name,
-        provider=provider,
-        api_config=api_config,
+        provider_preferences=provider_preferences,
     )
     if eval_result is None:
         eval_result = _compute_heuristic_eval(full_answer, tier)
@@ -774,10 +699,7 @@ async def run_pipeline(
         },
     )
 
-    # Per-provider cost estimation
-    run.cost_estimate = _estimate_cost(
-        provider, model_name, prompt_tokens, completion_tokens
-    )
+    run.cost_estimate = _estimate_cost(model_name, prompt_tokens, completion_tokens)
 
     # Publish final metrics
     await publish_event(
@@ -839,7 +761,7 @@ async def run_pipeline(
             role="assistant",
             content=full_answer,
             tier=tier.value,
-            model=model_name,
+            model=selection.public_name,
             run_id=run_id,
             citations_json=json.dumps([c.model_dump() for c in citations])
             if citations
