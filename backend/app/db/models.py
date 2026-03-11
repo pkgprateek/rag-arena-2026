@@ -1,7 +1,7 @@
-"""SQLAlchemy models for persisting Chat components."""
+"""SQLAlchemy models for persistence."""
 
 import datetime
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
@@ -39,3 +39,66 @@ class DBMessage(Base):
     )
 
     session = relationship("DBSession", back_populates="messages")
+
+
+class DBRuntimeModel(Base):
+    __tablename__ = "llm_models"
+
+    id = Column(String, primary_key=True, index=True)
+    model_slug = Column(String, nullable=False, unique=True, index=True)
+    display_name = Column(String, nullable=False)
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    is_default = Column(Boolean, nullable=False, default=False)
+    supports_chat = Column(Boolean, nullable=False, default=True)
+    supports_eval = Column(Boolean, nullable=False, default=True)
+    supports_langextract = Column(Boolean, nullable=False, default=False)
+    supports_embeddings = Column(Boolean, nullable=False, default=False)
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.datetime.now(datetime.timezone.utc)
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.datetime.now(datetime.timezone.utc),
+        onupdate=datetime.datetime.now(datetime.timezone.utc),
+    )
+
+    routing = relationship(
+        "DBRuntimeModelRouting",
+        back_populates="model",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class DBRuntimeModelRouting(Base):
+    __tablename__ = "llm_model_routing"
+
+    model_id = Column(String, ForeignKey("llm_models.id"), primary_key=True)
+    provider_order_json = Column(Text, nullable=False, default="[]")
+    allow_fallbacks = Column(Boolean, nullable=False, default=True)
+    require_parameters = Column(Boolean, nullable=False, default=True)
+    zdr = Column(Boolean, nullable=True)
+    only_providers_json = Column(Text, nullable=True)
+    ignore_providers_json = Column(Text, nullable=True)
+    sort = Column(String, nullable=True)
+    max_price_prompt = Column(Integer, nullable=True)
+    max_price_completion = Column(Integer, nullable=True)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.datetime.now(datetime.timezone.utc),
+        onupdate=datetime.datetime.now(datetime.timezone.utc),
+    )
+
+    model = relationship("DBRuntimeModel", back_populates="routing")
+
+
+class DBRuntimeSetting(Base):
+    __tablename__ = "runtime_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.datetime.now(datetime.timezone.utc),
+        onupdate=datetime.datetime.now(datetime.timezone.utc),
+    )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,14 @@ class DocScope(str, Enum):
 
     GLOBAL = "global"  # Available to all chat sessions
     SESSION = "session"  # Only available within the uploading session
+
+
+class DocTierState(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
+    DELETED = "deleted"
 
 
 class RunStatus(str, Enum):
@@ -172,6 +180,89 @@ class CompareRun(BaseModel):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class ProviderPreferences(BaseModel):
+    order: list[str] = Field(default_factory=list)
+    allow_fallbacks: bool = True
+    require_parameters: bool = True
+    zdr: bool | None = None
+    only: list[str] = Field(default_factory=list)
+    ignore: list[str] = Field(default_factory=list)
+    sort: str | None = None
+    max_price: dict[str, int] | None = None
+
+
+class RuntimeModelConfig(BaseModel):
+    id: str
+    model_slug: str
+    display_name: str
+    is_enabled: bool = True
+    is_default: bool = False
+    supports_chat: bool = True
+    supports_eval: bool = True
+    supports_langextract: bool = False
+    supports_embeddings: bool = False
+    provider_preferences: ProviderPreferences = Field(
+        default_factory=ProviderPreferences
+    )
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    @property
+    def public_model_name(self) -> str:
+        return self.model_slug
+
+
+class CreateRuntimeModelRequest(BaseModel):
+    model_slug: str = Field(min_length=1)
+    display_name: str = Field(min_length=1, max_length=120)
+    is_enabled: bool = True
+    is_default: bool = False
+    supports_chat: bool = True
+    supports_eval: bool = True
+    supports_langextract: bool = False
+    supports_embeddings: bool = False
+    provider_preferences: ProviderPreferences = Field(
+        default_factory=ProviderPreferences
+    )
+
+
+class UpdateRuntimeModelRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_enabled: bool | None = None
+    is_default: bool | None = None
+    supports_chat: bool | None = None
+    supports_eval: bool | None = None
+    supports_langextract: bool | None = None
+    supports_embeddings: bool | None = None
+    provider_preferences: ProviderPreferences | None = None
+
+
+class RuntimeModelsResponse(BaseModel):
+    models: list[RuntimeModelConfig] = Field(default_factory=list)
+
+
+class RuntimeAppSettings(BaseModel):
+    default_chat_model_slug: str
+    embedding_model_slug: str
+    reranker_model_slug: str
+    langextract_model_slug: str
+    semantic_cache_enabled: bool
+    semantic_cache_ttl: int
+    semantic_cache_threshold: float
+    calcom_link: str
+
+
+class UpdateRuntimeAppSettingsRequest(BaseModel):
+    default_chat_model_slug: str | None = None
+    embedding_model_slug: str | None = None
+    reranker_model_slug: str | None = None
+    langextract_model_slug: str | None = None
+    semantic_cache_enabled: bool | None = None
+    semantic_cache_ttl: int | None = None
+    semantic_cache_threshold: float | None = None
+    calcom_link: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # API request / response shapes
 # ---------------------------------------------------------------------------
@@ -209,3 +300,36 @@ class StreamEvent(BaseModel):
     run_id: str = ""
     tier: Optional[Tier] = None
     data: dict | str | list = ""
+
+
+class DocTierStateInfo(BaseModel):
+    status: DocTierState
+    chunks: int = 0
+    error: str | None = None
+
+
+class DocListItem(BaseModel):
+    doc_id: str
+    filename: str
+    scope: DocScope
+    session_id: str = ""
+    current_visibility: Literal["visible", "hidden"] = "visible"
+    tier_states: dict[Tier, DocTierStateInfo] = Field(default_factory=dict)
+    source_status: Literal["persisted", "deleted"] = "persisted"
+
+
+class DocsListResponse(BaseModel):
+    documents: list[DocListItem] = Field(default_factory=list)
+    store_stats: dict[str, Any] = Field(default_factory=dict)
+
+
+class DocUploadResponse(BaseModel):
+    doc_id: str
+    filename: str
+    chunks: int = 0
+    scope: DocScope
+    session_id: str = ""
+    status: str
+    indexed_tiers: list[str] = Field(default_factory=list)
+    tier_states: dict[Tier, DocTierStateInfo] = Field(default_factory=dict)
+    store_stats: dict[str, Any] = Field(default_factory=dict)

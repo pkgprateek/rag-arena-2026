@@ -18,13 +18,12 @@ class Settings(BaseSettings):
     )
 
     # --- LLM providers ---
-    groq_api_key: str = ""
     openrouter_api_key: str = ""
-    google_ai_studio_api_key: str = ""
+    admin_settings_token: str = ""
+    environment: str = "development"
 
     # --- Models ---
-    # Comma-separated list of models. Format: provider/model-name
-    # Example: groq/llama-3.3-70b-versatile,groq/llama-3.1-8b-instant
+    # Bootstrap-only seed list. Runtime DB state becomes authoritative after init.
     available_models: str = ""
     default_model: str = ""
 
@@ -35,18 +34,16 @@ class Settings(BaseSettings):
     uploads_dir: str = "/app/data/uploads"
 
     # --- Embedding & Reranking Models ---
-    # Fast remote API embeddings via Google AI Studio
-    embedding_model: str = "text-embedding-004"
+    # OpenRouter-backed embedding model fallback when DB config has none.
+    embedding_model: str = "openrouter/openai/text-embedding-3-small"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
-
-    # Unstructured Serverless API key (https://platform.unstructuredapp.io)
-    # Tiers 2+ will fall back to basic parsing if this is not set.
     unstructured_api_key: str = ""
 
     # --- LangExtract (Modern-tier metadata enrichment) ---
-    langextract_model: str = "google/gemini-2.0-flash"
+    langextract_model: str = "openrouter/google/gemini-2.0-flash"
 
     # --- Semantic Cache (Tier 4) ---
+    semantic_cache_enabled: bool = True
     semantic_cache_ttl: int = 3600  # seconds, 0 = disabled
     semantic_cache_threshold: float = 0.92  # cosine similarity threshold
 
