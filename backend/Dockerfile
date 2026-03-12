@@ -6,7 +6,6 @@ ENV UV_LINK_MODE=copy
 ENV PYTHONUNBUFFERED=1
 # Point HuggingFace to a predictable, writable cache location
 ENV HF_HOME=/app/cache
-ENV TRANSFORMERS_CACHE=/app/cache
 
 WORKDIR /app
 
@@ -16,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     libgomp1 \
+    libxcb1 \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,6 +33,10 @@ COPY ./app ./app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+# Docling runs headless in this service, so swap GUI OpenCV for the headless build.
+RUN uv pip uninstall --python /app/.venv/bin/python opencv-python opencv-python-headless || true
+RUN uv pip install --python /app/.venv/bin/python --no-cache-dir opencv-python-headless
+
 
 # Stage 2: Clean Runtime Stage (no uv, no build tools)
 FROM python:3.13-slim-bookworm
@@ -41,7 +45,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 # HuggingFace cache — must match the volume mount in docker-compose.yml
 ENV HF_HOME=/app/cache
-ENV TRANSFORMERS_CACHE=/app/cache
 # Chroma's ONNX embedding model cache (separate from HF_HOME)
 ENV CHROMA_CACHE_DIR=/app/cache/chroma
 
@@ -55,6 +58,8 @@ RUN mkdir -p /app/cache /app/data && chown -R appuser:appuser /app
 # Install minimal runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
+    libxcb1 \
+    libglib2.0-0 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

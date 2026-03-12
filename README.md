@@ -17,13 +17,13 @@ This document serves as the single source of truth for the entire RAG Arena 2026
 ### Non-Goals (What we are explicitly NOT doing)
 - We are **not** building an Agentic loop (self-reflection, tool use, multi-step orchestration). This strictly targets RAG (Search + Synthesis).
 - We are **not** optimizing for cost at the Enterprise tier. Tier 4 will freely use compute for cross-encoder reranking and rigorous metadata extraction to guarantee accuracy.
-- We are **not** building our own Vector database or OCR model. We leverage industry standards (Chroma, Unstructured, BGE) aggressively.
+- We are **not** building our own Vector database or OCR model. We leverage industry standards (Chroma, Docling, BGE) aggressively.
 
 ---
 
 ## 🏗️ 2. System Architecture (`/arch`)
 
-The unified stack is orchestrated via a monolithic `docker-compose.yml` defining 5 distinct, isolated microservices. The host system's only requirement is Docker.
+The unified stack is orchestrated via a monolithic `docker-compose.yml` defining the frontend, backend, Redis, and Chroma services. The host system's only requirement is Docker.
 
 ### Component Diagram
 ```mermaid
@@ -32,9 +32,9 @@ graph TD
     Nginx -->|HTTP 8000| FastAPI[Backend: Python/uvicorn]
     
     FastAPI -->|HTTP 8000| Chroma[(ChromaDB Container)]
-    FastAPI -->|HTTP 8001| Unstructured[Unstructured API Container]
     FastAPI -->|TCP 6379| Redis[(Redis Pub/Sub & Caching)]
     
+    FastAPI -.->|Local Conversion| Docling[Docling Parser Library]
     FastAPI -.->|Local Inference| FlagEmbedding{BGE Reranker v2}
     FlagEmbedding -.->|Volume| HFCache[(HF Model Cache)]
     
@@ -44,22 +44,29 @@ graph TD
 ### Data Boundaries
 - **Frontend** is purely static. Built in milliseconds using `Bun`. 
 - **Backend** is stateless horizontally, maintaining state using Redis. Built using `uv` (Rust-based pip).
-- **Unstructured API** handles all the heavy C++ dependencies natively (Poppler, Tesseract) so the FastAPI backend image remains tiny and secure.
+- **Docling** is used in-process for rich document conversion (`pdf`, `pptx`, `docx`, `html`, `xlsx`), while `md`, `txt`, `json`, and `csv` are used directly.
 - **Reranker** runs locally in the backend using FP16 to maximize performance and avoid external API latency/costs per query.
 
 ---
 
 ## 📊 3. The 4 Structural Tiers
 
-The core mechanic of the arena is split pipelines. On upload, Starter indexing is immediate; higher tiers are lazily indexed from stored source files on first use. At query time, each tier uses a different retrieval strategy.
+The core mechanic of the arena is split pipelines. Global uploads process the active tier first and then background the remaining tiers. Session attachments upload immediately but only process the current tier when the first prompt is sent. At query time, each tier uses a different retrieval strategy.
 
 | Feature | Tier 1: RAG Starter | Tier 2: RAG Plus | Tier 3: RAG Enterprise | Tier 4: RAG Modern (2026) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Parsing** | Naive `pypdf` extraction | Layout-aware (Unstructured) | Layout-aware (Unstructured) | Layout-aware (Unstructured) |
+| **Parsing** | Direct text or Docling rich conversion | Direct text or Docling rich conversion | Direct text or Docling rich conversion | Direct text or Docling rich conversion |
 | **Chunking**| Fixed-size Token Splitting | Semantic Paragraph Splitting| Semantic Chunking (Enterprise profile) | Layout/Page-aware + LangExtract enrichment |
 | **Indexing**| Chroma (Dense Only) | Chroma (Dense + Sparse BM25)| Chroma (Dense + Sparse BM25)| Chroma (Dense + Sparse BM25) |
 | **Search** | Top 3 Dense Vector | Reciprocal Rank Fusion (Top 5)| Deep RRF + **BGE Reranker v2** + Semantic Cache | Deep RRF + Reranker + Enrichment Boost + Semantic Cache |
-| **Eval** | None | None | LLM-as-a-judge (Citation / Relevance) | Strict LLM-as-a-judge gating |
+| **Eval** | Pipeline eval result published | Pipeline eval result published | LLM-as-a-judge with heuristic fallback | LLM-as-a-judge with heuristic fallback |
+
+Supported upload formats:
+
+- Direct-use: `.md`, `.txt`, `.json`, `.csv`
+- Docling-converted: `.pdf`, `.docx`, `.pptx`, `.html`, `.htm`, `.xlsx`
+
+Detailed workflow diagrams live in [`docs/rag-tier-workflows.md`](docs/rag-tier-workflows.md).
 
 ---
 
@@ -68,8 +75,8 @@ The core mechanic of the arena is split pipelines. On upload, Starter indexing i
 The backend implements rigorous OWASP LLM 2025 standard mitigations:
 
 1. **Privilege Dropping**: The python container creates an `appuser` system account and explicitly runs `uvicorn` as non-root to prevent escalation vulnerabilities.
-2. **Network Scoping**: Redis, Chroma, and Unstructured are all kept inside a private `rag_net` Docker bridge. They are not addressable from the outside world.
-3. **Supply Chain Pinning**: External Docker images are pinned strictly (`chromadb/chroma:0.4.24`, `unstructured-io/unstructured:0.12.5`) to prevent registry-tag hijacking.
+2. **Network Scoping**: Redis and Chroma are kept inside a private `rag_net` Docker bridge. They are not addressable from the outside world except through the compose topology.
+3. **Supply Chain Pinning**: Backend Python dependencies are locked in `uv.lock`, and containerized dependencies are isolated to explicit services.
 4. **Input Sanitation**: Output HTML is scrubbed of `<script>`, `iframe`, and JS generic event handlers (`onerror=` etc.) to prevent LLM-driven XSS injection attacks on the React frontend.
 5. **Prompt Injection Headers**: System instructions aggressively sandbox the user's input, preventing "forget previous instructions" jailbreaks.
 
@@ -91,7 +98,7 @@ docker compose up --build
 
 ### Required Production Infrastructure Sizes
 - **CPU**: 4 vCPUs minimum (Needed to run local BGE HuggingFace Transformers concurrently without spiking response times above 5 seconds).
-- **RAM**: 8GB RAM minimum. Unstructured parsing uses intense Layout models (Yolox / Table transformers), and FlagEmbedding requires baseline memory cache. 1GB/2GB droplets will terminate with OOM errors.
+- **RAM**: 8GB RAM minimum. Docling conversion plus local reranking and model caches can be memory-intensive under concurrent use. 1GB/2GB droplets will terminate with OOM errors.
 - **Port Mapping**: Only expose port `80` (Frontend) and `443` (SSL Router).
 
 ---
