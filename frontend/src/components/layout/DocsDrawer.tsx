@@ -103,16 +103,9 @@ function DocItem({
   onRemove: () => void;
 }) {
   const tierState = doc.tier_states[currentTier];
-  const isProcessing =
-    tierState.status === "queued" || tierState.status === "processing";
-  const canDelete =
-    doc.scope === "session" || !isProcessing;
-  const chunkLabel =
-    tierState.chunks > 0
-      ? `${tierState.chunks} chunk${tierState.chunks === 1 ? "" : "s"}`
-      : doc.scope === "session"
-        ? "Attached to this session"
-        : "Processing";
+  const isProcessing = tierState.status === "processing";
+  const canDelete = doc.scope === "session" || !isProcessing;
+  const statusLabel = formatDocStatus(doc, tierState.status, tierState.chunks);
 
   return (
     <div
@@ -145,10 +138,8 @@ function DocItem({
           >
             {doc.filename}
           </p>
-          <p className={`text-[10px] ${isProcessing ? "text-slate-400 dark:text-zinc-500" : "text-slate-400 dark:text-zinc-500"}`}>
-            {isProcessing
-              ? `${capitalizeTier(currentTier)} processing`
-              : `${formatTierState(currentTier, tierState.status)} · ${chunkLabel}`}
+          <p className="text-[10px] text-slate-400 dark:text-zinc-500">
+            {statusLabel}
           </p>
         </div>
       </div>
@@ -175,10 +166,28 @@ function DocItem({
   );
 }
 
-function formatTierState(tier: Tier, status: string) {
-  return `${capitalizeTier(tier)} ${status}`;
-}
+function formatDocStatus(
+  doc: DocListItem,
+  status: string,
+  chunks: number,
+) {
+  if (status === "queued") {
+    return doc.scope === "session" ? "Attached to this session" : "Queued";
+  }
 
-function capitalizeTier(tier: Tier) {
-  return tier.charAt(0).toUpperCase() + tier.slice(1);
+  if (status === "processing") {
+    return "Processing";
+  }
+
+  if (status === "ready") {
+    return chunks > 0
+      ? `Ready · ${chunks} chunk${chunks === 1 ? "" : "s"}`
+      : "Ready";
+  }
+
+  if (status === "error") {
+    return "Error";
+  }
+
+  return status;
 }

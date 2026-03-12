@@ -52,12 +52,19 @@ function App() {
   const [sessionDocs, setSessionDocs] = useState<DocListItem[]>([]);
   const [pendingGlobalDocs, setPendingGlobalDocs] = useState<PendingGlobalDocEntry[]>([]);
   const [dbSessions, setDbSessions] = useState<SessionListItem[]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [isMainAreaDragging, setIsMainAreaDragging] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const dragCounter = React.useRef(0);
+  const didRestoreSession = React.useRef(false);
+  const previousStreamingState = React.useRef(false);
+  const previousCompareRunningState = React.useRef(false);
 
   React.useEffect(() => {
+    if (!chat.isHydrated) {
+      return;
+    }
     api
       .fetchSessions()
       .then((data) => {
@@ -68,9 +75,13 @@ function App() {
           tier: s.tier,
         }));
         setDbSessions(mapped);
+        setSessionsLoaded(true);
       })
-      .catch((err) => console.error("Failed to fetch sessions from DB:", err));
-  }, [chat.sessionId, chat.hasInteracted]);
+      .catch((err) => {
+        console.error("Failed to fetch sessions from DB:", err);
+        setSessionsLoaded(true);
+      });
+  }, [chat.hasInteracted, chat.isHydrated, chat.sessionId]);
 
   React.useEffect(() => {
     api
@@ -101,6 +112,9 @@ function App() {
   }, [pendingGlobalDocs]);
 
   React.useEffect(() => {
+    if (!chat.isHydrated) {
+      return;
+    }
     const refreshDocs = async () => {
       try {
         const response = await api.listDocs(chat.sessionId);
@@ -120,32 +134,7 @@ function App() {
     };
 
     void refreshDocs();
-  }, [chat.sessionId]);
-
-  React.useEffect(() => {
-    const hasActiveProcessing = [...globalDocs, ...sessionDocs].some((doc) =>
-      Object.values(doc.tier_states).some(
-        (tierState) =>
-          tierState.status === "queued" || tierState.status === "processing",
-      ),
-    );
-
-    if (!hasActiveProcessing) {
-      return;
-    }
-
-    const handle = window.setInterval(() => {
-      void api
-        .listDocs(chat.sessionId)
-        .then((response) => {
-          setGlobalDocs(response.documents.filter((doc) => doc.scope === "global"));
-          setSessionDocs(response.documents.filter((doc) => doc.scope === "session"));
-        })
-        .catch((err) => console.error("Failed to refresh docs:", err));
-    }, 2500);
-
-    return () => window.clearInterval(handle);
-  }, [chat.sessionId, globalDocs, sessionDocs]);
+  }, [chat.isHydrated, chat.sessionId]);
 
   React.useEffect(() => {
     const stored = localStorage.getItem("ui-theme");
@@ -177,6 +166,9 @@ function App() {
     .find((m) => m.role === "assistant" && !m.isStreaming);
 
   const refreshDocs = React.useCallback(async () => {
+    if (!chat.isHydrated) {
+      return;
+    }
     const response = await api.listDocs(chat.sessionId);
     const liveGlobalDocs = response.documents.filter((doc) => doc.scope === "global");
     setGlobalDocs(liveGlobalDocs);
@@ -186,9 +178,80 @@ function App() {
         (entry) =>
           Date.now() - entry.queuedAt < PENDING_GLOBAL_DOC_TTL_MS &&
           !liveGlobalDocs.some((doc) => doc.filename === entry.filename),
-      ),
+        ),
+      );
+  }, [chat.isHydrated, chat.sessionId]);
+
+  React.useEffect(() => {
+    if (!chat.isHydrated) {
+      previousStreamingState.current = chat.isStreaming;
+      return;
+    }
+
+    const didJustFinishStreaming =
+      previousStreamingState.current && !chat.isStreaming;
+    previousStreamingState.current = chat.isStreaming;
+
+    if (!didJustFinishStreaming) {
+      return;
+    }
+
+    if (globalDocs.length === 0 && sessionDocs.length === 0) {
+      return;
+    }
+
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after completion:", err),
     );
-  }, [chat.sessionId]);
+  }, [
+    chat.isHydrated,
+    chat.isStreaming,
+    globalDocs.length,
+    refreshDocs,
+    sessionDocs.length,
+  ]);
+
+  React.useEffect(() => {
+    if (!chat.isHydrated || !sessionsLoaded || didRestoreSession.current) {
+      return;
+    }
+
+    didRestoreSession.current = true;
+    const matchingSession = dbSessions.find((session) => session.id === chat.sessionId);
+
+    if (!matchingSession) {
+      chat.startNewSession(chat.currentTier);
+      return;
+    }
+
+    void chat.loadSession(chat.sessionId);
+  }, [
+    chat.currentTier,
+    chat.isHydrated,
+    chat.loadSession,
+    chat.sessionId,
+    chat.startNewSession,
+    dbSessions,
+    sessionsLoaded,
+  ]);
+
+  React.useEffect(() => {
+    const didJustFinishCompare =
+      previousCompareRunningState.current && !compare.isRunning;
+    previousCompareRunningState.current = compare.isRunning;
+
+    if (!didJustFinishCompare) {
+      return;
+    }
+
+    if (globalDocs.length === 0 && sessionDocs.length === 0) {
+      return;
+    }
+
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after compare:", err),
+    );
+  }, [compare.isRunning, globalDocs.length, refreshDocs, sessionDocs.length]);
 
   const handleGlobalUploadQueued = React.useCallback(
     (files: File[]) => {
@@ -338,28 +401,44 @@ function App() {
     }
   };
 
+  const uploadStagedSessionFiles = React.useCallback(async () => {
+    if (stagedFiles.length === 0) {
+      return true;
+    }
+
+    setIsSending(true);
+    try {
+      await Promise.all(
+        stagedFiles.map(async (file) => {
+          await api.uploadDoc(file, "session", chat.sessionId, chat.currentTier);
+        }),
+      );
+      setStagedFiles([]);
+      await refreshDocs();
+      return true;
+    } catch (err) {
+      console.error("Upload failed before sending message", err);
+      alert("Failed to upload attached files. Message not sent.");
+      return false;
+    } finally {
+      setIsSending(false);
+    }
+  }, [chat.currentTier, chat.sessionId, refreshDocs, stagedFiles]);
+
   const handleSendMessage = async (msg: string) => {
-    if (stagedFiles.length > 0) {
-      setIsSending(true);
-      try {
-        await Promise.all(
-          stagedFiles.map(async (file) => {
-            await api.uploadDoc(file, "session", chat.sessionId, chat.currentTier);
-          }),
-        );
-        setStagedFiles([]);
-        await refreshDocs();
-        // Wait, I should not clear isSending right away to avoid flicker
-        // before chat.isStreaming takes over, but setting it false is fine because it will quickly be followed by message dispatch
-        setIsSending(false);
-      } catch (err) {
-        console.error("Upload failed before sending message", err);
-        alert("Failed to upload attached files. Message not sent.");
-        setIsSending(false);
-        return;
-      }
+    const uploadsSucceeded = await uploadStagedSessionFiles();
+    if (!uploadsSucceeded) {
+      return;
     }
     chat.sendMessage(msg, chat.currentModel);
+  };
+
+  const handleRunCompare = async (msg: string) => {
+    const uploadsSucceeded = await uploadStagedSessionFiles();
+    if (!uploadsSucceeded) {
+      return;
+    }
+    await compare.runCompare(msg);
   };
 
   return (
@@ -445,7 +524,7 @@ function App() {
               tierResults={compare.tierResults}
               selectedTiers={compare.selectedTiers}
               onSelectedTiersChange={compare.setSelectedTiers}
-              onRunCompare={handleSendMessage}
+              onRunCompare={handleRunCompare}
               isRunning={compare.isRunning || isSending}
               models={chat.availableModels}
               currentModel={chat.currentModel}
