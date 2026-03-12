@@ -263,6 +263,40 @@ class MultiIndexStore:
             return None
         return asyncio.create_task(self._run_global_ingestion_sequence(doc_id, active_tier))
 
+    async def start_session_ingestion_for_tier(
+        self,
+        session_id: str,
+        tier: Tier,
+    ) -> list[asyncio.Task[None]]:
+        """Kick off current-tier ingestion for queued session docs in a chat session."""
+        tasks: list[asyncio.Task[None]] = []
+
+        for tracked in await self.list_tracked_documents(session_id):
+            if tracked.scope != "session" or tracked.session_id != session_id:
+                continue
+
+            state = tracked.tier_states.get(tier, DocTierState.DELETED)
+            if state == DocTierState.DELETED:
+                continue
+
+            if state == DocTierState.READY:
+                if not self.has_indexed_document(tracked.doc_id, tier):
+                    task = self.start_tier_ingestion(tracked.doc_id, tier, force=True)
+                    if task is not None:
+                        tasks.append(task)
+                continue
+
+            if state in {DocTierState.QUEUED, DocTierState.PROCESSING}:
+                task = self.start_tier_ingestion(
+                    tracked.doc_id,
+                    tier,
+                    force=state == DocTierState.PROCESSING,
+                )
+                if task is not None:
+                    tasks.append(task)
+
+        return tasks
+
     async def _run_global_ingestion_sequence(self, doc_id: str, active_tier: Tier) -> None:
         task = self.start_tier_ingestion(doc_id, active_tier)
         if task is not None:

@@ -18,7 +18,18 @@ router = APIRouter(prefix="/docs", tags=["docs"])
 
 # Max upload size: 10 MB
 MAX_FILE_SIZE = 10 * 1024 * 1024
-ALLOWED_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".pdf", ".docx", ".doc"}
+ALLOWED_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".csv",
+    ".json",
+    ".pdf",
+    ".docx",
+    ".pptx",
+    ".html",
+    ".htm",
+    ".xlsx",
+}
 
 
 def _persist_source_file(doc_id: str, ext: str, content_bytes: bytes) -> str:

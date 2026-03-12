@@ -9,7 +9,7 @@ BOOTSTRAP_CHAT_MODELS = (
     "openrouter/openai/gpt-oss-120b",
 )
 BOOTSTRAP_DEFAULT_CHAT_MODEL = "openrouter/openai/gpt-oss-20b"
-BOOTSTRAP_EMBEDDING_MODEL = "openrouter/openai/text-embedding-3-small"
+BOOTSTRAP_EMBEDDING_MODEL = "openrouter/qwen/qwen3-embedding-8b"
 BOOTSTRAP_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 BOOTSTRAP_LANGEXTRACT_MODEL = "openrouter/openai/gpt-oss-20b"
 BOOTSTRAP_SEMANTIC_CACHE_ENABLED = True
@@ -48,7 +48,6 @@ class Settings(BaseSettings):
     # --- Runtime-controlled retrieval models ---
     embedding_model: str = BOOTSTRAP_EMBEDDING_MODEL
     reranker_model: str = BOOTSTRAP_RERANKER_MODEL
-    unstructured_api_key: str = ""
 
     # --- Runtime-controlled LangExtract model ---
     langextract_model: str = BOOTSTRAP_LANGEXTRACT_MODEL

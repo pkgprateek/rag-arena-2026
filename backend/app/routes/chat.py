@@ -159,6 +159,8 @@ async def chat_send(
     await r.rpush(f"session:{req.session_id}:messages", user_msg.model_dump_json())
     await r.expire(f"session:{req.session_id}:messages", 3600)
 
+    await vector_store.start_session_ingestion_for_tier(req.session_id, req.tier)
+
     asyncio.create_task(
         run_pipeline(
             run_id=run.id,

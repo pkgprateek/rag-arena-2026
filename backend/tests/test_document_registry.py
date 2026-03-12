@@ -139,6 +139,90 @@ class DocumentRegistryTests(unittest.IsolatedAsyncioTestCase):
                 restarted_store.has_indexed_document("session-doc", Tier.STARTER)
             )
 
+    async def test_session_current_tier_bootstrap_starts_plus_ingestion_once(self) -> None:
+        await self.store.register_document(
+            doc_id="session-plus",
+            filename="session.txt",
+            total_chars=11,
+            scope="session",
+            session_id="session-1",
+            source_ext=".txt",
+            source_path=str(self.source_path),
+        )
+
+        async def fake_ingest_document(*, tier, **_kwargs):
+            from app.services.ingestion.chunkers import Chunk
+
+            return [
+                Chunk(
+                    id=f"{tier.value}-chunk",
+                    doc_id=f"session-plus_{tier.value}",
+                    content="summary",
+                    page=1,
+                )
+            ]
+
+        with patch(
+            "app.services.retrieval_v2.store.ingest_document",
+            side_effect=fake_ingest_document,
+        ) as ingest_document:
+            tasks = await self.store.start_session_ingestion_for_tier(
+                "session-1",
+                Tier.PLUS,
+            )
+            self.assertEqual(len(tasks), 1)
+            await tasks[0]
+
+            tracked = await self.store.get_tracked_document("session-plus")
+            assert tracked is not None
+            self.assertEqual(tracked.tier_states[Tier.PLUS], DocTierState.READY)
+            self.assertEqual(ingest_document.call_count, 1)
+
+            repeated_tasks = await self.store.start_session_ingestion_for_tier(
+                "session-1",
+                Tier.PLUS,
+            )
+            self.assertEqual(repeated_tasks, [])
+            self.assertEqual(ingest_document.call_count, 1)
+
+    async def test_session_current_tier_bootstrap_starts_enterprise_ingestion(self) -> None:
+        await self.store.register_document(
+            doc_id="session-enterprise",
+            filename="session.txt",
+            total_chars=11,
+            scope="session",
+            session_id="session-1",
+            source_ext=".txt",
+            source_path=str(self.source_path),
+        )
+
+        async def fake_ingest_document(*, tier, **_kwargs):
+            from app.services.ingestion.chunkers import Chunk
+
+            return [
+                Chunk(
+                    id=f"{tier.value}-chunk",
+                    doc_id=f"session-enterprise_{tier.value}",
+                    content="summary",
+                    page=1,
+                )
+            ]
+
+        with patch(
+            "app.services.retrieval_v2.store.ingest_document",
+            side_effect=fake_ingest_document,
+        ):
+            tasks = await self.store.start_session_ingestion_for_tier(
+                "session-1",
+                Tier.ENTERPRISE,
+            )
+            self.assertEqual(len(tasks), 1)
+            await tasks[0]
+
+        tracked = await self.store.get_tracked_document("session-enterprise")
+        assert tracked is not None
+        self.assertEqual(tracked.tier_states[Tier.ENTERPRISE], DocTierState.READY)
+
     async def test_global_document_processes_active_tier_first_then_remaining(self) -> None:
         await self.store.register_document(
             doc_id="global-doc",

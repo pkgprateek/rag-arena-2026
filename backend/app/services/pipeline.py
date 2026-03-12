@@ -316,6 +316,21 @@ async def _ensure_tier_indexed(
         )
 
 
+async def _visible_ready_documents(
+    tier: Tier,
+    session_id: str = "",
+) -> list[str]:
+    from app.models import DocTierState
+    from app.services.retrieval_v2.store import store as vector_store
+
+    tracked_docs = await vector_store.list_tracked_documents(session_id)
+    return [
+        tracked.filename
+        for tracked in tracked_docs
+        if tracked.tier_states.get(tier) == DocTierState.READY
+    ]
+
+
 async def run_pipeline(
     *,
     run_id: str,
@@ -515,6 +530,7 @@ async def run_pipeline(
 
     # Retrieve relevant chunks — session_id filters for session-scoped docs
     retrieval_outcome = retrieve_context(user_message, tier, session_id=session_id)
+    ready_document_names = await _visible_ready_documents(tier, session_id)
     if _is_document_summary_request(user_message):
         from app.services.retrieval_v2.store import store as vector_store
 
@@ -597,6 +613,19 @@ async def run_pipeline(
     messages = [
         {"role": "system", "content": system_prompt},
     ]
+    if ready_document_names and not full_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Documents are attached and indexed for this session, but retrieval did not "
+                    "surface relevant passages for this question. Do not claim no document exists. "
+                    "Instead say that no relevant passages were retrieved from the available documents "
+                    "and ask the user to refine the request if needed. "
+                    f"Available documents: {', '.join(ready_document_names[:8])}."
+                ),
+            }
+        )
     if full_context:
         messages.append(
             {
