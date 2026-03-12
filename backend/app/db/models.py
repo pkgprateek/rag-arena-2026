@@ -1,7 +1,16 @@
 """SQLAlchemy models for persistence."""
 
 import datetime
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Index,
+)
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
@@ -102,3 +111,51 @@ class DBRuntimeSetting(Base):
         default=datetime.datetime.now(datetime.timezone.utc),
         onupdate=datetime.datetime.now(datetime.timezone.utc),
     )
+
+
+class DBDocument(Base):
+    __tablename__ = "documents"
+
+    id = Column(String, primary_key=True, index=True)
+    scope = Column(String, nullable=False, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    filename = Column(String, nullable=False)
+    source_ext = Column(String, nullable=False, default="")
+    source_path = Column(String, nullable=False)
+    total_chars = Column(Integer, nullable=False, default=0)
+    content_hash = Column(String, nullable=False, index=True)
+    source_status = Column(String, nullable=False, default="persisted")
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.datetime.now(datetime.timezone.utc)
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.datetime.now(datetime.timezone.utc),
+        onupdate=datetime.datetime.now(datetime.timezone.utc),
+    )
+
+    tier_states = relationship(
+        "DBDocumentTierState",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+
+
+class DBDocumentTierState(Base):
+    __tablename__ = "document_tier_states"
+
+    document_id = Column(String, ForeignKey("documents.id"), primary_key=True)
+    tier = Column(String, primary_key=True)
+    status = Column(String, nullable=False, default="queued")
+    chunks = Column(Integer, nullable=False, default=0)
+    error_text = Column(Text, nullable=True)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.datetime.now(datetime.timezone.utc),
+        onupdate=datetime.datetime.now(datetime.timezone.utc),
+    )
+
+    document = relationship("DBDocument", back_populates="tier_states")
+
+
+Index("ix_documents_scope_session", DBDocument.scope, DBDocument.session_id)
