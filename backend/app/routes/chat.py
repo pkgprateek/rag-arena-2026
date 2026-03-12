@@ -21,6 +21,7 @@ from app.services.pipeline import run_pipeline
 from app.db.database import get_db
 from app.db.models import DBSession, DBMessage
 from app.services.runtime_models import resolve_chat_model
+from app.services.retrieval_v2.store import store as vector_store
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -90,6 +91,15 @@ async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)) ->
     db_session = await db.get(DBSession, session_id)
     if not db_session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    deleted_docs = await vector_store.delete_session_documents(session_id)
+    for tracked in deleted_docs:
+        try:
+            from pathlib import Path
+
+            Path(tracked.source_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     await db.execute(delete(DBMessage).where(DBMessage.session_id == session_id))
     await db.execute(delete(DBSession).where(DBSession.id == session_id))

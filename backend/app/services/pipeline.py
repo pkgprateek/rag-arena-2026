@@ -8,6 +8,7 @@ and optimization strategy, not from swapping the base chat model.
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 import json
 import logging
 import re
@@ -55,6 +56,10 @@ PROVIDER_COSTS: dict[str, tuple[float, float]] = {
 
 # Fallback if model not found in pricing table
 DEFAULT_COST = (0.000001, 0.000002)
+_SUMMARY_REQUEST_PATTERN = re.compile(
+    r"\b(summar(?:ize|ise|y)|overview|tl;dr|key points|high[- ]level|main takeaways?)\b",
+    re.IGNORECASE,
+)
 
 
 def _estimate_cost(model_name: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -87,6 +92,49 @@ def _sanitize_output(text: str) -> str:
     for pattern, replacement in _SANITIZE_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
+
+
+def _is_document_summary_request(text: str) -> bool:
+    """Detect prompts that ask for whole-document synthesis instead of lookup."""
+    return bool(_SUMMARY_REQUEST_PATTERN.search(text))
+
+
+def _select_summary_chunks(
+    chunks,
+    *,
+    max_chunks: int,
+    per_doc_limit: int,
+):
+    """Use early, ordered chunks across docs for whole-document summary requests."""
+    if not chunks:
+        return []
+
+    selected: list[tuple[Any, float]] = []
+    selected_ids: set[str] = set()
+    doc_counts: defaultdict[str, int] = defaultdict(int)
+
+    for chunk in chunks:
+        doc_id = chunk.doc_id.rsplit("_", 1)[0]
+        if doc_counts[doc_id] > 0:
+            continue
+        selected.append((chunk, 1.0))
+        selected_ids.add(chunk.id)
+        doc_counts[doc_id] += 1
+        if len(selected) >= max_chunks:
+            return selected
+
+    for chunk in chunks:
+        if chunk.id in selected_ids:
+            continue
+        doc_id = chunk.doc_id.rsplit("_", 1)[0]
+        if doc_counts[doc_id] >= per_doc_limit:
+            continue
+        selected.append((chunk, 0.98))
+        doc_counts[doc_id] += 1
+        if len(selected) >= max_chunks:
+            break
+
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +253,7 @@ async def _ensure_tier_indexed(
     from app.models import DocTierState
     from app.services.retrieval_v2.store import store as vector_store
 
-    tracked_docs = vector_store.list_tracked_documents(session_id)
+    tracked_docs = await vector_store.list_tracked_documents(session_id)
     if not tracked_docs:
         return
 
@@ -215,6 +263,14 @@ async def _ensure_tier_indexed(
     for tracked in tracked_docs:
         state = tracked.tier_states.get(tier, DocTierState.DELETED)
         if state == DocTierState.READY:
+            if not vector_store.has_indexed_document(tracked.doc_id, tier):
+                task = vector_store.start_tier_ingestion(
+                    tracked.doc_id,
+                    tier,
+                    force=True,
+                )
+                if task is not None:
+                    pending_tasks.append((tracked.doc_id, task))
             continue
         if state == DocTierState.ERROR:
             error = tracked.error_by_tier.get(tier) or "indexing failed"
@@ -224,8 +280,12 @@ async def _ensure_tier_indexed(
             continue
 
         task = vector_store.get_tier_task(tracked.doc_id, tier)
-        if task is None and state == DocTierState.QUEUED:
-            task = vector_store.start_tier_ingestion(tracked.doc_id, tier)
+        if task is None and state in {DocTierState.QUEUED, DocTierState.PROCESSING}:
+            task = vector_store.start_tier_ingestion(
+                tracked.doc_id,
+                tier,
+                force=state == DocTierState.PROCESSING,
+            )
         if task is not None:
             pending_tasks.append((tracked.doc_id, task))
 
@@ -243,13 +303,13 @@ async def _ensure_tier_indexed(
             *(task for _doc_id, task in pending_tasks), return_exceptions=True
         )
 
-    for tracked in vector_store.list_tracked_documents(session_id):
+    for tracked in await vector_store.list_tracked_documents(session_id):
         state = tracked.tier_states.get(tier, DocTierState.DELETED)
         if state == DocTierState.ERROR:
             error = tracked.error_by_tier.get(tier) or "indexing failed"
             failures.append(f"{tracked.filename}: {error}")
 
-    if failures and vector_store.count_ready_documents(tier, session_id) == 0:
+    if failures and await vector_store.count_ready_documents(tier, session_id) == 0:
         unique_failures = list(dict.fromkeys(failures))
         raise RuntimeError(
             f"No documents are ready for tier {tier.value}. Failed indexing: {'; '.join(unique_failures[:3])}"
@@ -446,16 +506,29 @@ async def run_pipeline(
     )
     t_retrieval_start = time.perf_counter()
 
-    if tier != Tier.STARTER:
-        await _ensure_tier_indexed(
-            tier=tier,
-            stream_id=stream_id,
-            run_id=run_id,
-            session_id=session_id,
-        )
+    await _ensure_tier_indexed(
+        tier=tier,
+        stream_id=stream_id,
+        run_id=run_id,
+        session_id=session_id,
+    )
 
     # Retrieve relevant chunks — session_id filters for session-scoped docs
     retrieval_outcome = retrieve_context(user_message, tier, session_id=session_id)
+    if _is_document_summary_request(user_message):
+        from app.services.retrieval_v2.store import store as vector_store
+
+        summary_chunks = _select_summary_chunks(
+            vector_store.list_indexed_chunks(tier, session_id=session_id),
+            max_chunks=max(tier_profile.final_top_k * 2, tier_profile.final_top_k),
+            per_doc_limit=max(4, tier_profile.per_doc_limit),
+        )
+        if summary_chunks:
+            retrieval_outcome.results = summary_chunks
+            retrieval_outcome.unique_docs_used = len(
+                {chunk.doc_id.rsplit("_", 1)[0] for chunk, _score in summary_chunks}
+            )
+
     citations: list[Citation] = []
     context_parts: list[str] = []
 

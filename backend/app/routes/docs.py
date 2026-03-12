@@ -73,7 +73,7 @@ async def upload_doc(
     )
     source_path = _persist_source_file(doc_id, ext, content_bytes)
 
-    tracked = vector_store.register_document(
+    tracked = await vector_store.register_document(
         doc_id=doc_id,
         filename=file.filename,
         total_chars=len(content_bytes),
@@ -105,7 +105,7 @@ async def list_docs(
     """List visible tracked documents with per-tier state."""
     documents = [
         _build_doc_list_item(tracked)
-        for tracked in vector_store.list_tracked_documents(session_id)
+        for tracked in await vector_store.list_tracked_documents(session_id)
     ]
     return DocsListResponse(documents=documents, store_stats=vector_store.get_stats())
 
@@ -118,7 +118,7 @@ async def load_sample() -> DocUploadResponse:
     content_bytes = get_sample_corpus_bytes()
     doc_id = "sample_rag_guide"
     source_path = _persist_source_file(doc_id, ".md", content_bytes)
-    tracked = vector_store.register_document(
+    tracked = await vector_store.register_document(
         doc_id=doc_id,
         filename="RAG Guide (Built-in Sample)",
         total_chars=len(content_bytes),
@@ -133,13 +133,13 @@ async def load_sample() -> DocUploadResponse:
 @router.delete("/{doc_id}")
 async def delete_doc(doc_id: str) -> dict:
     """Remove a document from the index across all tiers."""
-    tracked = vector_store.get_tracked_document(doc_id)
+    tracked = await vector_store.get_tracked_document(doc_id)
     if tracked is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
     source_path = tracked.source_path
-    found = vector_store.delete_tracked_document(doc_id)
-    if not found:
+    deleted = await vector_store.delete_tracked_document(doc_id)
+    if deleted is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
     try:

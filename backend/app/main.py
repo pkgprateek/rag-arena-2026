@@ -13,6 +13,7 @@ from app.config import settings
 from app.redis_client import close_redis
 from app.routes import chat, compare, config, docs, runs, settings as settings_route, stream
 from app.db.database import AsyncSessionLocal, init_db
+from app.services.retrieval_v2.store import store as vector_store
 from app.services.runtime_models import bootstrap_runtime_models, get_enabled_chat_models
 from app.services.runtime_settings import bootstrap_runtime_settings
 
@@ -49,6 +50,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         async with AsyncSessionLocal() as session:
             await bootstrap_runtime_settings(session)
             await bootstrap_runtime_models(session)
+        await vector_store.recover_persisted_documents()
         logger.info("SQLite database initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize SQLite db: {e}")
