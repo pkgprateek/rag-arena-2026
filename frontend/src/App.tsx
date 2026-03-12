@@ -430,7 +430,10 @@ function App() {
     if (!uploadsSucceeded) {
       return;
     }
-    chat.sendMessage(msg, chat.currentModel);
+    await chat.sendMessage(msg, chat.currentModel);
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after sending message", err),
+    );
   };
 
   const handleRunCompare = async (msg: string) => {
@@ -439,6 +442,9 @@ function App() {
       return;
     }
     await compare.runCompare(msg);
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after compare request", err),
+    );
   };
 
   return (

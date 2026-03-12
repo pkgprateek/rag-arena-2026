@@ -147,7 +147,7 @@ export function UploadModal({
                             type="file"
                             multiple
                             className="hidden"
-                            accept=".txt,.md,.csv,.json,.pdf,.docx,.doc"
+                            accept=".txt,.md,.csv,.json,.pdf,.docx,.pptx,.html,.htm,.xlsx"
                             onChange={(e) => {
                                 if (e.target.files && e.target.files.length > 0) {
                                     handleFilesSelect(e.target.files);
@@ -208,7 +208,7 @@ export function UploadModal({
                                     Drag & drop or click to select
                                 </p>
                                 <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1">
-                                    PDF, DOCX, TXT, MD, CSV, JSON · max 10 MB
+                                    PDF, DOCX, PPTX, HTML, XLSX, TXT, MD, CSV, JSON · max 10 MB
                                 </p>
                             </div>
                         )}
