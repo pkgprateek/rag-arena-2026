@@ -11,7 +11,7 @@ import logging
 
 from app.models import Tier
 from app.tier_profiles import get_tier_runtime_profile
-from app.services.ingestion.parsers import parse_basic, parse_layout_aware
+from app.services.ingestion.parsers import parse_for_tier
 from app.services.ingestion.chunkers import (
     chunk_fixed_size,
     chunk_semantic,
@@ -28,12 +28,10 @@ async def ingest_document(
 ) -> list[Chunk]:
     """Process a document end-to-end based on the tier profile."""
     profile = get_tier_runtime_profile(tier)
+    elements = parse_for_tier(file_bytes, filename, ext)
 
-    if profile.parse_mode == "basic_local_extraction":
-        elements = parse_basic(file_bytes, filename, ext)
+    if profile.chunk_mode == "basic_chunking":
         return chunk_fixed_size(elements, doc_id=doc_id)
-
-    elements = parse_layout_aware(file_bytes, filename, ext)
 
     if profile.chunk_mode in {
         "semantic_structure_chunking",
