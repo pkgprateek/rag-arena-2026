@@ -149,6 +149,11 @@ def _seed_candidates() -> list[CreateRuntimeModelRequest]:
         "openai/gpt-oss-120b": ProviderPreferences(
             only=["atlas-cloud/fp8", "google-vertex"]
         ),
+        "qwen/qwen3-embedding-8b": ProviderPreferences(
+            allow_fallbacks=True,
+            require_parameters=True,
+            sort="price",
+        ),
     }
 
     for raw in models:

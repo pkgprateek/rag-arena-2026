@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 import importlib.util
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -16,12 +16,15 @@ from app.models import (
     UpdateRuntimeAppSettingsRequest,
 )
 import app.main as app_main
+from app.models import RuntimeModelConfig
+import app.services.embeddings as embeddings_service
 from app.services.openrouter import build_provider_preferences, normalize_model_spec
 from app.services.runtime_models import (
     bootstrap_runtime_models,
     create_runtime_model,
     disable_runtime_model,
     get_enabled_chat_models,
+    get_model_for_capability,
     resolve_chat_model,
 )
 from app.services.runtime_settings import (
@@ -47,7 +50,7 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
         }
         settings.default_model = "openrouter/openai/gpt-oss-20b"
         settings.langextract_model = "openrouter/openai/gpt-oss-20b"
-        settings.embedding_model = "openrouter/openai/text-embedding-3-small"
+        settings.embedding_model = "openrouter/qwen/qwen3-embedding-8b"
         settings.reranker_model = "BAAI/bge-reranker-v2-m3"
         settings.semantic_cache_enabled = True
         settings.semantic_cache_ttl = 3600
@@ -79,6 +82,7 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             models, default = await get_enabled_chat_models(session)
             selection = await resolve_chat_model(session, "")
             constrained = await resolve_chat_model(session, "openai/gpt-oss-120b")
+            embedding = await get_model_for_capability(session, "embeddings")
 
         self.assertIn("openai/gpt-oss-20b", models)
         self.assertIn("openai/gpt-oss-120b", models)
@@ -89,6 +93,10 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             constrained.runtime_model.provider_preferences.only,
             ["atlas-cloud/fp8", "google-vertex"],
         )
+        self.assertIsNotNone(embedding)
+        self.assertEqual(embedding.model_slug, "qwen/qwen3-embedding-8b")
+        self.assertTrue(embedding.supports_embeddings)
+        self.assertEqual(embedding.provider_preferences.sort, "price")
 
     async def test_disable_default_promotes_next_chat_model(self) -> None:
         async with self.session_factory() as session:
@@ -130,9 +138,7 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
 
             initial = await get_runtime_app_settings(session)
             self.assertEqual(initial.default_chat_model_slug, "openai/gpt-oss-20b")
-            self.assertEqual(
-                initial.embedding_model_slug, "openai/text-embedding-3-small"
-            )
+            self.assertEqual(initial.embedding_model_slug, "qwen/qwen3-embedding-8b")
             self.assertTrue(initial.semantic_cache_enabled)
 
             updated = await update_runtime_app_settings(
@@ -238,6 +244,55 @@ class OpenRouterHelperTests(unittest.TestCase):
         self.assertEqual(payload["order"], ["google-ai-studio", "vertex-ai"])
         self.assertFalse(payload["allow_fallbacks"])
         self.assertTrue(payload["require_parameters"])
+
+
+class EmbeddingServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self._api_key_backup = settings.openrouter_api_key
+        settings.openrouter_api_key = "test-key"
+
+    async def asyncTearDown(self) -> None:
+        settings.openrouter_api_key = self._api_key_backup
+
+    async def test_embedder_uses_runtime_provider_preferences(self) -> None:
+        runtime_model = RuntimeModelConfig(
+            id="embedder-model",
+            model_slug="qwen/qwen3-embedding-8b",
+            display_name="Qwen 3 Embedding 8B",
+            supports_chat=False,
+            supports_eval=False,
+            supports_embeddings=True,
+            provider_preferences=ProviderPreferences(
+                allow_fallbacks=True,
+                require_parameters=True,
+                sort="price",
+            ),
+        )
+        response = Mock()
+        response.json.return_value = {"data": [{"index": 0, "embedding": [0.1, 0.2]}]}
+        response.raise_for_status.return_value = None
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = None
+
+        with (
+            patch.object(
+                embeddings_service,
+                "get_model_for_capability",
+                AsyncMock(return_value=runtime_model),
+            ),
+            patch.object(embeddings_service.httpx, "AsyncClient", return_value=client),
+        ):
+            embedder = embeddings_service.APIEmbedder()
+            result = await embedder.encode(["hello"])
+
+        self.assertEqual(result, [[0.1, 0.2]])
+        client.post.assert_awaited_once()
+        request_payload = client.post.await_args.kwargs["json"]
+        self.assertEqual(request_payload["model"], "qwen/qwen3-embedding-8b")
+        self.assertEqual(request_payload["provider"]["sort"], "price")
+        self.assertTrue(request_payload["provider"]["allow_fallbacks"])
 
 
 if __name__ == "__main__":
