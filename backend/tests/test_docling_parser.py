@@ -49,14 +49,20 @@ class FakeDoc:
 
 class DoclingParserTests(unittest.TestCase):
     def tearDown(self) -> None:
-        parsers._DOCLING_CONVERTER = None
+        parsers._DOCLING_CONVERTERS.clear()
 
-    def test_docling_format_options_configure_pdf_backend_and_ocr(self) -> None:
+    def test_docling_format_options_configure_pdf_backend_without_ocr_by_default(self) -> None:
         options = parsers._docling_format_options()
 
         self.assertIn(InputFormat.PDF, options)
         pdf_option = options[InputFormat.PDF]
         self.assertIs(pdf_option.backend, DoclingParseDocumentBackend)
+        self.assertFalse(pdf_option.pipeline_options.do_ocr)
+
+    def test_docling_format_options_configure_pdf_backend_with_ocr_when_requested(self) -> None:
+        options = parsers._docling_format_options(use_ocr=True)
+
+        pdf_option = options[InputFormat.PDF]
         self.assertTrue(pdf_option.pipeline_options.do_ocr)
         self.assertIsInstance(pdf_option.pipeline_options.ocr_options, RapidOcrOptions)
 
@@ -114,9 +120,67 @@ class DoclingParserTests(unittest.TestCase):
         self.assertEqual(result[0].metadata["conversion_format"], "csv")
         self.assertIn("quarter,revenue", result[0].text)
 
+    def test_pdf_parse_uses_text_only_when_content_is_sufficient(self) -> None:
+        fake_doc = FakeDoc(
+            items=[
+                FakeTextItem(
+                    "paragraph",
+                    "This PDF already contains a healthy embedded text layer with enough characters to avoid OCR fallback entirely.",
+                ),
+                FakeTextItem(
+                    "paragraph",
+                    "A second paragraph keeps the extracted text comfortably above the minimum threshold.",
+                ),
+            ]
+        )
+
+        with (
+            patch.object(parsers, "_docling_document", return_value=fake_doc) as docling_document,
+            self.assertLogs(parsers.logger, level="INFO") as logs,
+        ):
+            result = parsers.parse_docling_rich(b"pdf-bytes", "file.pdf", ".pdf")
+
+        self.assertEqual(len(result), 2)
+        docling_document.assert_called_once_with(
+            b"pdf-bytes", "file.pdf", ".pdf", use_ocr=False
+        )
+        self.assertIn("pdf_parse mode=text_only result=accepted", logs.output[0])
+
+    def test_pdf_parse_retries_with_ocr_when_text_layer_is_insufficient(self) -> None:
+        sparse_doc = FakeDoc(items=[FakeTextItem("paragraph", "too short")])
+        ocr_doc = FakeDoc(
+            items=[
+                FakeTextItem(
+                    "paragraph",
+                    "OCR fallback recovered enough text from the scanned PDF to make the document usable for ingestion.",
+                )
+            ]
+        )
+
+        with (
+            patch.object(parsers, "_docling_document", side_effect=[sparse_doc, ocr_doc]) as docling_document,
+            self.assertLogs(parsers.logger, level="INFO") as logs,
+        ):
+            result = parsers.parse_docling_rich(b"pdf-bytes", "file.pdf", ".pdf")
+
+        self.assertEqual(result[0].text, ocr_doc._items[0].text)
+        self.assertEqual(docling_document.call_count, 2)
+        self.assertEqual(docling_document.call_args_list[0].kwargs["use_ocr"], False)
+        self.assertEqual(docling_document.call_args_list[1].kwargs["use_ocr"], True)
+        self.assertTrue(
+            any("result=insufficient" in entry and "retry_ocr" in entry for entry in logs.output)
+        )
+        self.assertTrue(
+            any("mode=ocr_fallback result=accepted" in entry for entry in logs.output)
+        )
+
     def test_docling_failure_falls_back_for_pdf(self) -> None:
         with (
-            patch.object(parsers, "_docling_document", side_effect=RuntimeError("boom")),
+            patch.object(
+                parsers,
+                "_docling_document",
+                side_effect=[RuntimeError("boom"), RuntimeError("boom again")],
+            ),
             patch.object(
                 parsers,
                 "parse_basic",
@@ -128,9 +192,12 @@ class DoclingParserTests(unittest.TestCase):
 
         parse_basic.assert_called_once_with(b"pdf-bytes", "file.pdf", ".pdf")
         self.assertEqual(result[0].text, "fallback")
-        self.assertIn("backend=docling_parse", logs.output[0])
-        self.assertIn("ocr_engine=RapidOCR", logs.output[0])
-        self.assertIn("error_type=RuntimeError", logs.output[0])
+        self.assertTrue(
+            any("mode=text_only result=failed error_type=RuntimeError" in entry for entry in logs.output)
+        )
+        self.assertTrue(
+            any("mode=ocr_fallback result=failed fallback=basic_parser error_type=RuntimeError" in entry for entry in logs.output)
+        )
 
 
 if __name__ == "__main__":

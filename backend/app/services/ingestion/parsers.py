@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 import tempfile
@@ -24,9 +25,12 @@ logger = logging.getLogger(__name__)
 
 DIRECT_TEXT_EXTENSIONS = {".md", ".txt", ".json", ".csv"}
 DOCLING_RICH_EXTENSIONS = {".pdf", ".pptx", ".docx", ".html", ".htm", ".xlsx"}
-_DOCLING_CONVERTER: DocumentConverter | None = None
+_DOCLING_CONVERTERS: dict[str, DocumentConverter] = {}
 PDF_BACKEND_NAME = "docling_parse"
 PDF_OCR_ENGINE_NAME = "RapidOCR"
+PDF_MIN_TEXT_CHARS = 160
+PDF_MIN_MEANINGFUL_ELEMENTS = 1
+PDF_MIN_ELEMENT_CHARS = 20
 
 
 @dataclass
@@ -40,9 +44,10 @@ class ParsedElement:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def _docling_format_options() -> dict[InputFormat, PdfFormatOption]:
-    pipeline_options = PdfPipelineOptions(do_ocr=True)
-    pipeline_options.ocr_options = RapidOcrOptions()
+def _docling_format_options(*, use_ocr: bool = False) -> dict[InputFormat, PdfFormatOption]:
+    pipeline_options = PdfPipelineOptions(do_ocr=use_ocr)
+    if use_ocr:
+        pipeline_options.ocr_options = RapidOcrOptions()
 
     return {
         InputFormat.PDF: PdfFormatOption(
@@ -52,13 +57,15 @@ def _docling_format_options() -> dict[InputFormat, PdfFormatOption]:
     }
 
 
-def _get_docling_converter() -> DocumentConverter:
-    global _DOCLING_CONVERTER
-    if _DOCLING_CONVERTER is None:
-        _DOCLING_CONVERTER = DocumentConverter(
-            format_options=_docling_format_options()
+def _get_docling_converter(*, use_ocr: bool = False) -> DocumentConverter:
+    cache_key = "with_ocr" if use_ocr else "without_ocr"
+    converter = _DOCLING_CONVERTERS.get(cache_key)
+    if converter is None:
+        converter = DocumentConverter(
+            format_options=_docling_format_options(use_ocr=use_ocr)
         )
-    return _DOCLING_CONVERTER
+        _DOCLING_CONVERTERS[cache_key] = converter
+    return converter
 
 
 def _page_number(item: Any) -> int:
@@ -145,14 +152,16 @@ def parse_direct_text(file_bytes: bytes, filename: str, ext: str) -> list[Parsed
     return parse_basic(file_bytes, filename, ext)
 
 
-def _docling_document(file_bytes: bytes, filename: str, ext: str) -> Any:
+def _docling_document(
+    file_bytes: bytes, filename: str, ext: str, *, use_ocr: bool = False
+) -> Any:
     suffix = ext or Path(filename).suffix or ".bin"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
         handle.write(file_bytes)
         temp_path = Path(handle.name)
 
     try:
-        result = _get_docling_converter().convert(str(temp_path))
+        result = _get_docling_converter(use_ocr=use_ocr).convert(str(temp_path))
         return result.document
     finally:
         temp_path.unlink(missing_ok=True)
@@ -205,33 +214,39 @@ def _parse_xlsx_with_docling(doc: Any, filename: str) -> list[ParsedElement]:
     return elements
 
 
-def parse_docling_rich(
-    file_bytes: bytes,
-    filename: str,
-    ext: str,
-) -> list[ParsedElement]:
-    """Parse rich documents with Docling and normalize into ParsedElement."""
-    if ext not in DOCLING_RICH_EXTENSIONS:
-        raise ValueError(f"Unsupported Docling extension '{ext}' for {filename}")
+def _normalized_text(text: str) -> str:
+    return " ".join(text.split())
 
-    try:
-        doc = _docling_document(file_bytes, filename, ext)
-    except Exception as exc:
-        if ext in {".pdf", ".docx", ".html", ".htm"}:
-            logger.warning(
-                (
-                    "Docling parse failed for '%s'; falling back to basic parser "
-                    "(backend=%s, ocr_engine=%s, error_type=%s): %s"
-                ),
-                filename,
-                PDF_BACKEND_NAME if ext == ".pdf" else "default",
-                PDF_OCR_ENGINE_NAME if ext == ".pdf" else "n/a",
-                type(exc).__name__,
-                exc,
-            )
-            return parse_basic(file_bytes, filename, ".txt" if ext in {".html", ".htm"} else ext)
-        raise ValueError(f"Docling failed to parse {filename}: {exc}") from exc
 
+def _pdf_text_metrics(elements: list[ParsedElement]) -> tuple[int, int, bool]:
+    normalized_texts = [_normalized_text(element.text) for element in elements]
+    meaningful_texts = [text for text in normalized_texts if text]
+    non_whitespace_chars = sum(
+        len(text.replace(" ", "")) for text in meaningful_texts
+    )
+    meaningful_elements = sum(
+        1 for text in meaningful_texts if len(text) >= PDF_MIN_ELEMENT_CHARS
+    )
+    tokens = re.findall(r"[A-Za-z0-9]{3,}", " ".join(meaningful_texts).lower())
+    repeated_artifacts = len(tokens) >= 12 and (len(set(tokens)) / len(tokens)) < 0.2
+    return non_whitespace_chars, meaningful_elements, repeated_artifacts
+
+
+def _pdf_text_insufficiency_reasons(elements: list[ParsedElement]) -> list[str]:
+    non_whitespace_chars, meaningful_elements, repeated_artifacts = _pdf_text_metrics(
+        elements
+    )
+    reasons: list[str] = []
+    if meaningful_elements < PDF_MIN_MEANINGFUL_ELEMENTS:
+        reasons.append("elements")
+    if non_whitespace_chars < PDF_MIN_TEXT_CHARS:
+        reasons.append("chars")
+    if repeated_artifacts:
+        reasons.append("artifacts")
+    return reasons
+
+
+def _parse_docling_output(doc: Any, filename: str, ext: str) -> list[ParsedElement]:
     if ext == ".xlsx":
         elements = _parse_xlsx_with_docling(doc, filename)
         if elements:
@@ -285,6 +300,80 @@ def parse_docling_rich(
         ]
 
     raise ValueError(f"Docling returned no content for {filename}")
+
+
+def parse_docling_rich(
+    file_bytes: bytes,
+    filename: str,
+    ext: str,
+) -> list[ParsedElement]:
+    """Parse rich documents with Docling and normalize into ParsedElement."""
+    if ext not in DOCLING_RICH_EXTENSIONS:
+        raise ValueError(f"Unsupported Docling extension '{ext}' for {filename}")
+
+    if ext == ".pdf":
+        try:
+            doc = _docling_document(file_bytes, filename, ext, use_ocr=False)
+            elements = _parse_docling_output(doc, filename, ext)
+            non_whitespace_chars, meaningful_elements, _ = _pdf_text_metrics(elements)
+            insufficiency_reasons = _pdf_text_insufficiency_reasons(elements)
+            if not insufficiency_reasons:
+                logger.info(
+                    "pdf_parse mode=text_only result=accepted chars=%s elements=%s",
+                    non_whitespace_chars,
+                    meaningful_elements,
+                )
+                return elements
+            logger.info(
+                "pdf_parse mode=text_only result=insufficient reasons=%s chars=%s elements=%s -> retry_ocr",
+                ",".join(insufficiency_reasons),
+                non_whitespace_chars,
+                meaningful_elements,
+            )
+        except Exception as exc:
+            logger.warning(
+                "pdf_parse mode=text_only result=failed error_type=%s -> retry_ocr: %s",
+                type(exc).__name__,
+                exc,
+            )
+
+        try:
+            doc = _docling_document(file_bytes, filename, ext, use_ocr=True)
+            elements = _parse_docling_output(doc, filename, ext)
+            non_whitespace_chars, meaningful_elements, _ = _pdf_text_metrics(elements)
+            logger.info(
+                "pdf_parse mode=ocr_fallback result=accepted chars=%s elements=%s",
+                non_whitespace_chars,
+                meaningful_elements,
+            )
+            return elements
+        except Exception as exc:
+            logger.warning(
+                "pdf_parse mode=ocr_fallback result=failed fallback=basic_parser error_type=%s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return parse_basic(file_bytes, filename, ext)
+
+    try:
+        doc = _docling_document(file_bytes, filename, ext)
+        return _parse_docling_output(doc, filename, ext)
+    except Exception as exc:
+        if ext in {".docx", ".html", ".htm"}:
+            logger.warning(
+                (
+                    "Docling parse failed for '%s'; falling back to basic parser "
+                    "(backend=%s, error_type=%s): %s"
+                ),
+                filename,
+                "default",
+                type(exc).__name__,
+                exc,
+            )
+            return parse_basic(
+                file_bytes, filename, ".txt" if ext in {".html", ".htm"} else ext
+            )
+        raise ValueError(f"Docling failed to parse {filename}: {exc}") from exc
 
 
 def parse_for_tier(file_bytes: bytes, filename: str, ext: str) -> list[ParsedElement]:
