@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
 from app.db.database import Base
+from app.db.models import DBRuntimeSetting
 from app.models import (
     CreateRuntimeModelRequest,
     ProviderPreferences,
@@ -51,7 +53,7 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
         settings.default_model = "openrouter/openai/gpt-oss-20b"
         settings.langextract_model = "openrouter/openai/gpt-oss-20b"
         settings.embedding_model = "openrouter/qwen/qwen3-embedding-8b"
-        settings.reranker_model = "BAAI/bge-reranker-v2-m3"
+        settings.reranker_model = "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"
         settings.semantic_cache_enabled = True
         settings.semantic_cache_ttl = 3600
         settings.semantic_cache_threshold = 0.92
@@ -138,7 +140,15 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
 
             initial = await get_runtime_app_settings(session)
             self.assertEqual(initial.default_chat_model_slug, "openai/gpt-oss-20b")
-            self.assertEqual(initial.embedding_model_slug, "qwen/qwen3-embedding-8b")
+            self.assertEqual(
+                initial.embedding_model, "openrouter/qwen/qwen3-embedding-8b"
+            )
+            self.assertEqual(
+                initial.reranker_model, "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"
+            )
+            self.assertEqual(
+                initial.langextract_model, "openrouter/openai/gpt-oss-20b"
+            )
             self.assertTrue(initial.semantic_cache_enabled)
 
             updated = await update_runtime_app_settings(
@@ -161,25 +171,52 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated.semantic_cache_threshold, 0.88)
         self.assertEqual(updated.calcom_link, "https://cal.example.com/new-link")
 
-    async def test_runtime_settings_bootstrap_keeps_existing_db_values(self) -> None:
+    async def test_runtime_settings_bootstrap_removes_deprecated_model_rows(self) -> None:
         async with self.session_factory() as session:
-            await bootstrap_runtime_settings(session)
-            await update_runtime_app_settings(
-                session,
-                UpdateRuntimeAppSettingsRequest(
-                    reranker_model_slug="custom/reranker-v1",
-                    semantic_cache_ttl=42,
-                ),
+            session.add(
+                DBRuntimeSetting(
+                    key="embedding_model_slug", value="openai/text-embedding-3-small"
+                )
             )
-
-            settings.reranker_model = "BAAI/changed-at-restart"
-            settings.semantic_cache_ttl = 999
+            session.add(
+                DBRuntimeSetting(
+                    key="reranker_model_slug", value="BAAI/bge-reranker-v2-m3"
+                )
+            )
+            session.add(
+                DBRuntimeSetting(
+                    key="langextract_model_slug", value="openrouter/meta-llama/test"
+                )
+            )
+            session.add(DBRuntimeSetting(key="embedding_model", value="legacy-embedder"))
+            session.add(DBRuntimeSetting(key="reranker_model", value="legacy-reranker"))
+            session.add(DBRuntimeSetting(key="semantic_cache_ttl", value="42"))
+            await session.commit()
 
             await bootstrap_runtime_settings(session)
             current = await get_runtime_app_settings(session)
+            remaining = {
+                row.key: row.value
+                for row in (
+                    await session.execute(
+                        select(DBRuntimeSetting).order_by(DBRuntimeSetting.key.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            }
 
-        self.assertEqual(current.reranker_model_slug, "custom/reranker-v1")
+        self.assertEqual(current.embedding_model, "openrouter/qwen/qwen3-embedding-8b")
+        self.assertEqual(
+            current.reranker_model, "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"
+        )
+        self.assertEqual(current.langextract_model, "openrouter/openai/gpt-oss-20b")
         self.assertEqual(current.semantic_cache_ttl, 42)
+        self.assertNotIn("embedding_model_slug", remaining)
+        self.assertNotIn("reranker_model_slug", remaining)
+        self.assertNotIn("langextract_model_slug", remaining)
+        self.assertNotIn("embedding_model", remaining)
+        self.assertNotIn("reranker_model", remaining)
 
     async def test_runtime_settings_reject_invalid_numeric_ranges(self) -> None:
         async with self.session_factory() as session:
@@ -192,18 +229,21 @@ class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValidationError):
                 UpdateRuntimeAppSettingsRequest(semantic_cache_threshold=1.1)
 
-    async def test_runtime_settings_reject_embedding_assignment_without_capability(self) -> None:
+    async def test_runtime_settings_rejects_deprecated_model_updates(self) -> None:
         async with self.session_factory() as session:
             await bootstrap_runtime_settings(session)
             await bootstrap_runtime_models(session)
 
-            with self.assertRaises(HTTPException):
+            with self.assertRaises(HTTPException) as context:
                 await update_runtime_app_settings(
                     session,
                     UpdateRuntimeAppSettingsRequest(
                         embedding_model_slug="openai/gpt-oss-20b"
                     ),
                 )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("platform-managed", str(context.exception.detail))
 
     async def test_models_handler_returns_expected_shape(self) -> None:
         async with self.session_factory() as session:

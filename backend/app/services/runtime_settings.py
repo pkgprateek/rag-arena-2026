@@ -1,6 +1,8 @@
-"""Runtime app settings backed by SQLite with DB-authoritative runtime state."""
+"""Runtime app settings backed by SQLite."""
 
 from __future__ import annotations
+
+import logging
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -17,7 +19,7 @@ from app.config import (
     BOOTSTRAP_SEMANTIC_CACHE_TTL,
     settings,
 )
-from app.db.models import DBRuntimeModel, DBRuntimeSetting
+from app.db.models import DBRuntimeSetting
 from app.models import RuntimeAppSettings, UpdateRuntimeAppSettingsRequest
 from app.services.openrouter import normalize_model_spec
 from app.services.runtime_models import (
@@ -25,16 +27,30 @@ from app.services.runtime_models import (
     set_default_chat_model_slug,
 )
 
+logger = logging.getLogger(__name__)
+
 _SETTING_KEYS = (
     "default_chat_model_slug",
-    "embedding_model_slug",
-    "reranker_model_slug",
-    "langextract_model_slug",
     "semantic_cache_enabled",
     "semantic_cache_ttl",
     "semantic_cache_threshold",
     "calcom_link",
 )
+_CODE_OWNED_MODEL_KEYS = (
+    "embedding_model_slug",
+    "reranker_model_slug",
+    "langextract_model_slug",
+)
+_LEGACY_MODEL_KEYS = (
+    "embedding_model",
+    "reranker_model",
+    "langextract_model",
+)
+_DEPRECATED_UPDATE_FIELDS = {
+    "embedding_model_slug",
+    "reranker_model_slug",
+    "langextract_model_slug",
+}
 
 
 def _as_bool(value: str | bool) -> bool:
@@ -46,9 +62,6 @@ def _as_bool(value: str | bool) -> bool:
 def _normalized_settings_payload() -> dict[str, str]:
     return {
         "default_chat_model_slug": normalize_model_spec(BOOTSTRAP_DEFAULT_CHAT_MODEL),
-        "embedding_model_slug": normalize_model_spec(BOOTSTRAP_EMBEDDING_MODEL),
-        "reranker_model_slug": BOOTSTRAP_RERANKER_MODEL,
-        "langextract_model_slug": normalize_model_spec(BOOTSTRAP_LANGEXTRACT_MODEL),
         "semantic_cache_enabled": "true" if BOOTSTRAP_SEMANTIC_CACHE_ENABLED else "false",
         "semantic_cache_ttl": str(BOOTSTRAP_SEMANTIC_CACHE_TTL),
         "semantic_cache_threshold": str(BOOTSTRAP_SEMANTIC_CACHE_THRESHOLD),
@@ -56,15 +69,15 @@ def _normalized_settings_payload() -> dict[str, str]:
     }
 
 
+def _apply_code_owned_model_settings() -> None:
+    settings.embedding_model = BOOTSTRAP_EMBEDDING_MODEL
+    settings.reranker_model = BOOTSTRAP_RERANKER_MODEL
+    settings.langextract_model = BOOTSTRAP_LANGEXTRACT_MODEL
+
+
 def _apply_runtime_setting(key: str, value: str) -> None:
     if key == "default_chat_model_slug":
         settings.default_model = normalize_model_spec(value)
-    elif key == "embedding_model_slug":
-        settings.embedding_model = normalize_model_spec(value)
-    elif key == "reranker_model_slug":
-        settings.reranker_model = value
-    elif key == "langextract_model_slug":
-        settings.langextract_model = normalize_model_spec(value)
     elif key == "semantic_cache_enabled":
         settings.semantic_cache_enabled = _as_bool(value)
     elif key == "semantic_cache_ttl":
@@ -83,6 +96,45 @@ async def _upsert_setting(session: AsyncSession, key: str, value: str) -> None:
         row.value = value
 
 
+async def _cleanup_deprecated_runtime_settings(session: AsyncSession) -> list[str]:
+    deprecated_keys = {*_CODE_OWNED_MODEL_KEYS, *_LEGACY_MODEL_KEYS}
+    result = await session.execute(
+        select(DBRuntimeSetting).where(DBRuntimeSetting.key.in_(deprecated_keys))
+    )
+    rows = result.scalars().all()
+    removed_keys: list[str] = []
+    for row in rows:
+        removed_keys.append(row.key)
+        await session.delete(row)
+    if removed_keys:
+        logger.info(
+            "runtime_settings_cleanup removed_keys=%s",
+            ",".join(sorted(removed_keys)),
+        )
+    return removed_keys
+
+
+def _validate_update_request(request: UpdateRuntimeAppSettingsRequest) -> None:
+    extras = set((request.model_extra or {}).keys())
+    if not extras:
+        return
+
+    deprecated = sorted(extras & _DEPRECATED_UPDATE_FIELDS)
+    if deprecated:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "These settings are platform-managed and cannot be updated: "
+                + ", ".join(deprecated)
+            ),
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unknown settings fields: {', '.join(sorted(extras))}",
+    )
+
+
 async def sync_runtime_app_settings(session: AsyncSession) -> None:
     default_slug = await get_default_chat_model_slug(session)
     if default_slug:
@@ -91,6 +143,8 @@ async def sync_runtime_app_settings(session: AsyncSession) -> None:
 
 
 async def bootstrap_runtime_settings(session: AsyncSession) -> None:
+    _apply_code_owned_model_settings()
+    await _cleanup_deprecated_runtime_settings(session)
     for key, value in _normalized_settings_payload().items():
         row = await session.get(DBRuntimeSetting, key)
         if row is None:
@@ -98,39 +152,12 @@ async def bootstrap_runtime_settings(session: AsyncSession) -> None:
             _apply_runtime_setting(key, value)
             continue
         _apply_runtime_setting(key, row.value)
+    _apply_code_owned_model_settings()
     await session.commit()
 
 
-async def _require_enabled_model_for_capability(
-    session: AsyncSession, model_slug: str, capability: str
-) -> str:
-    normalized_slug = normalize_model_spec(model_slug)
-    if not normalized_slug:
-        raise HTTPException(status_code=400, detail=f"{capability} model slug cannot be empty.")
-
-    capability_column = {
-        "embedding": DBRuntimeModel.supports_embeddings,
-        "langextract": DBRuntimeModel.supports_langextract,
-    }[capability]
-
-    result = await session.execute(
-        select(DBRuntimeModel).where(
-            DBRuntimeModel.model_slug == normalized_slug,
-            DBRuntimeModel.is_enabled.is_(True),
-            capability_column.is_(True),
-        )
-    )
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Model '{normalized_slug}' is not enabled for {capability} usage."
-            ),
-        )
-    return normalized_slug
-
-
 async def get_runtime_app_settings(session: AsyncSession) -> RuntimeAppSettings:
+    _apply_code_owned_model_settings()
     values = _normalized_settings_payload()
     for key in _SETTING_KEYS:
         row = await session.get(DBRuntimeSetting, key)
@@ -147,43 +174,28 @@ async def get_runtime_app_settings(session: AsyncSession) -> RuntimeAppSettings:
 
     return RuntimeAppSettings(
         default_chat_model_slug=normalize_model_spec(values["default_chat_model_slug"]),
-        embedding_model_slug=normalize_model_spec(values["embedding_model_slug"]),
-        reranker_model_slug=values["reranker_model_slug"],
-        langextract_model_slug=normalize_model_spec(values["langextract_model_slug"]),
         semantic_cache_enabled=_as_bool(values["semantic_cache_enabled"]),
         semantic_cache_ttl=int(values["semantic_cache_ttl"]),
         semantic_cache_threshold=float(values["semantic_cache_threshold"]),
         calcom_link=values["calcom_link"],
+        embedding_model=settings.embedding_model,
+        reranker_model=settings.reranker_model,
+        langextract_model=settings.langextract_model,
+        reranker_backend="local_llamacpp",
     )
 
 
 async def update_runtime_app_settings(
     session: AsyncSession, request: UpdateRuntimeAppSettingsRequest
 ) -> RuntimeAppSettings:
+    _validate_update_request(request)
+    _apply_code_owned_model_settings()
     if request.default_chat_model_slug is not None:
         default_slug = await set_default_chat_model_slug(
             session, request.default_chat_model_slug
         )
         await _upsert_setting(session, "default_chat_model_slug", default_slug)
         _apply_runtime_setting("default_chat_model_slug", default_slug)
-
-    if request.embedding_model_slug is not None:
-        stored = await _require_enabled_model_for_capability(
-            session, request.embedding_model_slug, "embedding"
-        )
-        await _upsert_setting(session, "embedding_model_slug", stored)
-        _apply_runtime_setting("embedding_model_slug", stored)
-
-    if request.langextract_model_slug is not None:
-        stored = await _require_enabled_model_for_capability(
-            session, request.langextract_model_slug, "langextract"
-        )
-        await _upsert_setting(session, "langextract_model_slug", stored)
-        _apply_runtime_setting("langextract_model_slug", stored)
-
-    if request.reranker_model_slug is not None:
-        await _upsert_setting(session, "reranker_model_slug", request.reranker_model_slug)
-        _apply_runtime_setting("reranker_model_slug", request.reranker_model_slug)
 
     if request.semantic_cache_enabled is not None:
         stored = "true" if request.semantic_cache_enabled else "false"
@@ -204,5 +216,6 @@ async def update_runtime_app_settings(
         await _upsert_setting(session, "calcom_link", request.calcom_link)
         _apply_runtime_setting("calcom_link", request.calcom_link)
 
+    _apply_code_owned_model_settings()
     await session.commit()
     return await get_runtime_app_settings(session)

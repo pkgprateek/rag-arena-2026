@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _utcnow() -> datetime:
@@ -243,31 +243,26 @@ class RuntimeModelsResponse(BaseModel):
 
 class RuntimeAppSettings(BaseModel):
     default_chat_model_slug: str
-    embedding_model_slug: str
-    reranker_model_slug: str
-    langextract_model_slug: str
     semantic_cache_enabled: bool
     semantic_cache_ttl: int = Field(ge=0)
     semantic_cache_threshold: float = Field(ge=0.0, le=1.0)
     calcom_link: str
+    embedding_model: str
+    reranker_model: str
+    langextract_model: str
+    reranker_backend: Literal["local_llamacpp"] | None = "local_llamacpp"
 
 
 class UpdateRuntimeAppSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     default_chat_model_slug: str | None = None
-    embedding_model_slug: str | None = None
-    reranker_model_slug: str | None = None
-    langextract_model_slug: str | None = None
     semantic_cache_enabled: bool | None = None
     semantic_cache_ttl: int | None = Field(default=None, ge=0)
     semantic_cache_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     calcom_link: str | None = None
 
-    @field_validator(
-        "default_chat_model_slug",
-        "embedding_model_slug",
-        "reranker_model_slug",
-        "langextract_model_slug",
-    )
+    @field_validator("default_chat_model_slug")
     @classmethod
     def strip_non_empty_strings(cls, value: str | None) -> str | None:
         if value is None:
