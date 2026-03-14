@@ -10,7 +10,7 @@ BOOTSTRAP_CHAT_MODELS = (
 )
 BOOTSTRAP_DEFAULT_CHAT_MODEL = "openrouter/openai/gpt-oss-20b"
 BOOTSTRAP_EMBEDDING_MODEL = "openrouter/qwen/qwen3-embedding-8b"
-BOOTSTRAP_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+BOOTSTRAP_RERANKER_MODEL = "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"
 BOOTSTRAP_LANGEXTRACT_MODEL = "openrouter/openai/gpt-oss-20b"
 BOOTSTRAP_SEMANTIC_CACHE_ENABLED = True
 BOOTSTRAP_SEMANTIC_CACHE_TTL = 3600
@@ -45,11 +45,20 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:////app/data/rag_arena.db"
     uploads_dir: str = "/app/data/uploads"
 
-    # --- Runtime-controlled retrieval models ---
+    # --- Code-owned retrieval models ---
     embedding_model: str = BOOTSTRAP_EMBEDDING_MODEL
     reranker_model: str = BOOTSTRAP_RERANKER_MODEL
+    reranker_enabled: bool = True
+    reranker_base_url: str = "http://127.0.0.1:8081"
+    reranker_timeout_seconds: float = 5.0
+    reranker_health_path: str = "/health"
+    reranker_api_path: str = "/v1/rerank"
+    reranker_model_cache_dir: str = "/app/cache/reranker"
+    reranker_model_filename: str = "qwen3-reranker-0.6b-q8_0.gguf"
+    reranker_server_host: str = "127.0.0.1"
+    reranker_server_port: int = 8081
 
-    # --- Runtime-controlled LangExtract model ---
+    # --- Code-owned LangExtract model ---
     langextract_model: str = BOOTSTRAP_LANGEXTRACT_MODEL
 
     # --- Semantic Cache (Tier 4) ---

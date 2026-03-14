@@ -9,13 +9,11 @@ import re
 
 from app.models import Tier
 from app.services.ingestion.chunkers import Chunk
+from app.services.reranking import local_llamacpp
 from app.services.retrieval_v2.store import store as vector_store
 from app.tier_profiles import get_tier_runtime_profile
 
 logger = logging.getLogger(__name__)
-
-_RERANKER = None
-_RERANKER_MODEL_NAME = ""
 _STOPWORDS = {
     "a",
     "an",
@@ -66,28 +64,6 @@ class RetrievalOutcome:
     enrichment_used: bool = False
     page_aware_used: bool = False
     unique_docs_used: int = 0
-
-
-def _get_reranker():
-    global _RERANKER, _RERANKER_MODEL_NAME
-    from app.config import settings
-
-    if _RERANKER is None or _RERANKER_MODEL_NAME != settings.reranker_model:
-        try:
-            logger.info(
-                "Initializing reranker model (download may occur on first run)..."
-            )
-            from FlagEmbedding import FlagReranker
-
-            _RERANKER = FlagReranker(settings.reranker_model, use_fp16=True)
-            _RERANKER_MODEL_NAME = settings.reranker_model
-            logger.info("Reranker '%s' loaded successfully.", settings.reranker_model)
-        except ImportError:
-            logger.warning(
-                "FlagEmbedding not installed. Reranking will fallback to rank fusion scores."
-            )
-            return None
-    return _RERANKER
 
 
 def retrieve_context(
@@ -145,15 +121,16 @@ def retrieve_context(
     if profile.use_rerank and ranked:
         rerank_used = True
         original_scores = {chunk.id: score for chunk, score in ranked}
-        reranked = _bge_rerank(
+        reranked, rerank_used = _rerank_with_local_service(
             query,
-            [chunk for chunk, _score in ranked],
+            ranked,
             top_k=max(profile.final_top_k * 2, profile.final_top_k),
         )
-        rerank_deltas = [
-            round(score - original_scores.get(chunk.id, 0.0), 4)
-            for chunk, score in reranked[: profile.final_top_k]
-        ]
+        if rerank_used:
+            rerank_deltas = [
+                round(score - original_scores.get(chunk.id, 0.0), 4)
+                for chunk, score in reranked[: profile.final_top_k]
+            ]
         ranked = reranked
 
     if profile.use_diversity_control:
@@ -286,33 +263,19 @@ def _apply_contextual_boosts(
     return boosted
 
 
-def _bge_rerank(
-    query: str, chunks: list[Chunk], top_k: int
-) -> list[tuple[Chunk, float]]:
-    reranker = _get_reranker()
+def _rerank_with_local_service(
+    query: str,
+    ranked_chunks: list[tuple[Chunk, float]],
+    top_k: int,
+) -> tuple[list[tuple[Chunk, float]], bool]:
+    if not ranked_chunks:
+        return [], False
 
-    if not reranker or not chunks:
-        return [(chunk, 0.9 - (i * 0.04)) for i, chunk in enumerate(chunks[:top_k])]
-
-    pairs = [[query, chunk.content] for chunk in chunks]
-
-    try:
-        scores = reranker.compute_score(pairs)
-        if isinstance(scores, float):
-            scores = [scores]
-
-        import math
-
-        def sigmoid(value: float) -> float:
-            return 1 / (1 + math.exp(-value))
-
-        normalized_scores = [sigmoid(score) for score in scores]
-        scored_chunks = list(zip(chunks, normalized_scores))
-        scored_chunks.sort(key=lambda item: item[1], reverse=True)
-        return scored_chunks[:top_k]
-    except Exception as exc:
-        logger.error("Reranking failed: %s", exc)
-        return [(chunk, 0.5) for chunk in chunks[:top_k]]
+    chunks = [chunk for chunk, _score in ranked_chunks]
+    reranked = local_llamacpp.rerank(query, chunks, top_k=top_k)
+    if reranked is None:
+        return ranked_chunks[:top_k], False
+    return reranked, True
 
 
 def _reciprocal_rank_fusion_many(

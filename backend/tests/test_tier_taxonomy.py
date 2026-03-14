@@ -103,7 +103,11 @@ class RetrievalBoundaryTests(unittest.TestCase):
             search.vector_store,
             "keyword_search",
             return_value=sparse,
-        ), patch.object(search, "_bge_rerank", return_value=reranked):
+        ), patch.object(
+            search,
+            "_rerank_with_local_service",
+            return_value=(reranked, True),
+        ):
             outcome = search.retrieve_context(
                 "compare policy and warranty coverage",
                 Tier.ENTERPRISE,
@@ -114,6 +118,7 @@ class RetrievalBoundaryTests(unittest.TestCase):
         self.assertTrue(outcome.query_orchestration_used)
         self.assertTrue(outcome.diversity_control_used)
         self.assertGreaterEqual(outcome.unique_docs_used, 2)
+        self.assertTrue(outcome.rerank_deltas)
 
     def test_modern_marks_page_aware_and_enrichment_usage(self) -> None:
         dense = [
@@ -133,13 +138,49 @@ class RetrievalBoundaryTests(unittest.TestCase):
             search.vector_store,
             "keyword_search",
             return_value=sparse,
-        ), patch.object(search, "_bge_rerank", return_value=reranked):
+        ), patch.object(
+            search,
+            "_rerank_with_local_service",
+            return_value=(reranked, True),
+        ):
             outcome = search.retrieve_context("which page and section cover the appendix table", Tier.MODERN)
 
         self.assertTrue(outcome.rerank_used)
         self.assertTrue(outcome.query_orchestration_used)
         self.assertTrue(outcome.enrichment_used)
         self.assertTrue(outcome.page_aware_used)
+
+    def test_enterprise_falls_back_to_fused_results_when_reranker_fails(self) -> None:
+        dense = [
+            (_chunk("alpha_enterprise", 0), 0.92),
+            (_chunk("beta_enterprise", 0), 0.85),
+        ]
+        sparse = [
+            (_chunk("gamma_enterprise", 0), 0.79),
+        ]
+        baseline = search._reciprocal_rank_fusion_many([dense, sparse], top_k=5)
+
+        with patch.object(search, "_build_query_plan", return_value=(["policy coverage"], False)), patch.object(
+            search.vector_store,
+            "vector_search",
+            return_value=dense,
+        ), patch.object(
+            search.vector_store,
+            "keyword_search",
+            return_value=sparse,
+        ), patch.object(
+            search,
+            "_rerank_with_local_service",
+            side_effect=lambda _query, ranked, top_k: (ranked[:top_k], False),
+        ):
+            outcome = search.retrieve_context("compare policy and warranty coverage", Tier.ENTERPRISE)
+
+        self.assertFalse(outcome.rerank_used)
+        self.assertEqual(outcome.rerank_deltas, [])
+        self.assertEqual(
+            [chunk.id for chunk, _score in outcome.results],
+            [chunk.id for chunk, _score in baseline[: len(outcome.results)]],
+        )
 
 
 if __name__ == "__main__":
