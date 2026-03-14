@@ -136,20 +136,18 @@ export interface SettingsModelsResponse {
 
 export interface RuntimeAppSettings {
     default_chat_model_slug: string;
-    embedding_model_slug: string;
-    reranker_model_slug: string;
-    langextract_model_slug: string;
     semantic_cache_enabled: boolean;
     semantic_cache_ttl: number;
     semantic_cache_threshold: number;
     calcom_link: string;
+    embedding_model: string;
+    reranker_model: string;
+    langextract_model: string;
+    reranker_backend?: "local_llamacpp" | null;
 }
 
 export interface UpdateRuntimeAppSettingsRequest {
     default_chat_model_slug?: string;
-    embedding_model_slug?: string;
-    reranker_model_slug?: string;
-    langextract_model_slug?: string;
     semantic_cache_enabled?: boolean;
     semantic_cache_ttl?: number;
     semantic_cache_threshold?: number;

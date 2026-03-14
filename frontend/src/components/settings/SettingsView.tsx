@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  KeyRound,
   LoaderCircle,
-  Plus,
-  RefreshCw,
   Save,
   Settings2,
-  ShieldAlert,
-  Star,
-  Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -22,53 +16,20 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type {
-  CreateRuntimeModelRequest,
-  ProviderPreferences,
-  RuntimeAppSettings,
-  RuntimeModelConfig,
-  UpdateRuntimeAppSettingsRequest,
-  UpdateRuntimeModelRequest,
-} from "@/types";
-
-const STORAGE_KEY = "admin-settings-token";
-
-const emptyPreferences: ProviderPreferences = {
-  order: [],
-  allow_fallbacks: true,
-  require_parameters: true,
-};
+import type { RuntimeAppSettings, UpdateRuntimeAppSettingsRequest } from "@/types";
 
 const emptyAppSettings: RuntimeAppSettings = {
   default_chat_model_slug: "",
-  embedding_model_slug: "",
-  reranker_model_slug: "",
-  langextract_model_slug: "",
   semantic_cache_enabled: true,
   semantic_cache_ttl: 3600,
   semantic_cache_threshold: 0.92,
   calcom_link: "",
-};
-
-const emptyModelForm: CreateRuntimeModelRequest = {
-  model_slug: "",
-  display_name: "",
-  is_enabled: true,
-  is_default: false,
-  supports_chat: true,
-  supports_eval: true,
-  supports_langextract: false,
-  supports_embeddings: false,
-  provider_preferences: emptyPreferences,
+  embedding_model: "",
+  reranker_model: "",
+  langextract_model: "",
+  reranker_backend: "local_llamacpp",
 };
 
 interface StatusBannerProps {
@@ -91,6 +52,25 @@ function StatusBanner({ tone, text }: StatusBannerProps) {
   );
 }
 
+function FieldLabel({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-sm font-medium text-slate-900 dark:text-zinc-100">
+        {title}
+      </div>
+      <div className="text-xs leading-5 text-slate-500 dark:text-zinc-400">
+        {description}
+      </div>
+    </div>
+  );
+}
+
 function ToggleRow({
   checked,
   label,
@@ -103,13 +83,16 @@ function ToggleRow({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-zinc-950/40">
-      <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(Boolean(value))} />
+    <label className="flex items-start gap-3 rounded-[22px] border border-slate-200/80 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-zinc-950/40">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(value) => onCheckedChange(Boolean(value))}
+      />
       <span className="space-y-1">
         <span className="block text-sm font-medium text-slate-800 dark:text-zinc-100">
           {label}
         </span>
-        <span className="block text-xs text-slate-500 dark:text-zinc-400">
+        <span className="block text-xs leading-5 text-slate-500 dark:text-zinc-400">
           {description}
         </span>
       </span>
@@ -117,27 +100,28 @@ function ToggleRow({
   );
 }
 
-function modelToForm(model: RuntimeModelConfig): CreateRuntimeModelRequest {
-  return {
-    model_slug: model.model_slug,
-    display_name: model.display_name,
-    is_enabled: model.is_enabled,
-    is_default: model.is_default,
-    supports_chat: model.supports_chat,
-    supports_eval: model.supports_eval,
-    supports_langextract: model.supports_langextract,
-    supports_embeddings: model.supports_embeddings,
-    provider_preferences: {
-      order: model.provider_preferences.order,
-      allow_fallbacks: model.provider_preferences.allow_fallbacks,
-      require_parameters: model.provider_preferences.require_parameters,
-      zdr: model.provider_preferences.zdr,
-      only: model.provider_preferences.only,
-      ignore: model.provider_preferences.ignore,
-      sort: model.provider_preferences.sort,
-      max_price: model.provider_preferences.max_price,
-    },
-  };
+function ModelCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <div className="rounded-[22px] border border-slate-200/80 bg-white/85 p-4 shadow-sm shadow-slate-200/30 dark:border-white/10 dark:bg-zinc-950/50 dark:shadow-none">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-3 break-words text-sm font-medium leading-6 text-slate-900 dark:text-zinc-100">
+        {value || "Unavailable"}
+      </div>
+      <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-zinc-400">
+        {hint}
+      </div>
+    </div>
+  );
 }
 
 function isValidUrl(value: string): boolean {
@@ -152,227 +136,99 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-function selectValueWithInvalidOption(
-  value: string,
-  options: RuntimeModelConfig[],
-): { selectValue: string; invalid: string | null } {
-  if (!value) {
-    return { selectValue: "", invalid: null };
-  }
-  const exists = options.some((option) => option.model_slug === value);
-  if (exists) {
-    return { selectValue: value, invalid: null };
-  }
-  return { selectValue: value, invalid: value };
-}
-
 export function SettingsView() {
-  const [adminToken, setAdminToken] = useState("");
-  const [models, setModels] = useState<RuntimeModelConfig[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [modelForm, setModelForm] = useState<CreateRuntimeModelRequest>(emptyModelForm);
-  const [providerOrderText, setProviderOrderText] = useState("");
   const [appSettings, setAppSettings] = useState<RuntimeAppSettings>(emptyAppSettings);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSavingModel, setIsSavingModel] = useState(false);
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [chatModelOptions, setChatModelOptions] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [statusText, setStatusText] = useState("");
 
-  useEffect(() => {
-    setAdminToken(sessionStorage.getItem(STORAGE_KEY) || "");
-  }, []);
-
-  const selectedModel = useMemo(
-    () => models.find((model) => model.id === selectedId) ?? null,
-    [models, selectedId],
+  const activeModels = useMemo(
+    () => [
+      {
+        label: "Default chat model",
+        value: appSettings.default_chat_model_slug,
+        hint: "Editable below. This remains the user-facing chat default.",
+      },
+      {
+        label: "Embedding model",
+        value: appSettings.embedding_model,
+        hint: "Platform-managed for now to keep retrieval stable across restarts.",
+      },
+      {
+        label: "Reranker model",
+        value: appSettings.reranker_model,
+        hint: appSettings.reranker_backend
+          ? `Served through ${appSettings.reranker_backend}.`
+          : "Platform-managed local reranker.",
+      },
+      {
+        label: "Langextract model",
+        value: appSettings.langextract_model,
+        hint: "Platform-managed extraction model for structured document signals.",
+      },
+    ],
+    [appSettings],
   );
-
-  const chatModelOptions = useMemo(
-    () => models.filter((model) => model.is_enabled && model.supports_chat),
-    [models],
-  );
-  const embeddingModelOptions = useMemo(
-    () => models.filter((model) => model.is_enabled && model.supports_embeddings),
-    [models],
-  );
-  const langextractModelOptions = useMemo(
-    () => models.filter((model) => model.is_enabled && model.supports_langextract),
-    [models],
-  );
-
-  const defaultChatSelect = selectValueWithInvalidOption(
-    appSettings.default_chat_model_slug,
-    chatModelOptions,
-  );
-  const embeddingSelect = selectValueWithInvalidOption(
-    appSettings.embedding_model_slug,
-    embeddingModelOptions,
-  );
-  const langextractSelect = selectValueWithInvalidOption(
-    appSettings.langextract_model_slug,
-    langextractModelOptions,
-  );
-
-  function resetModelForm(nextModel?: RuntimeModelConfig | null) {
-    if (!nextModel) {
-      setSelectedId(null);
-      setModelForm(emptyModelForm);
-      setProviderOrderText("");
-      return;
+  const availableChatModels = useMemo(() => {
+    const models = [...chatModelOptions];
+    if (
+      appSettings.default_chat_model_slug &&
+      !models.includes(appSettings.default_chat_model_slug)
+    ) {
+      models.unshift(appSettings.default_chat_model_slug);
     }
-    setSelectedId(nextModel.id);
-    setModelForm(modelToForm(nextModel));
-    setProviderOrderText(nextModel.provider_preferences.order.join(", "));
-  }
+    return models;
+  }, [appSettings.default_chat_model_slug, chatModelOptions]);
 
-  async function loadSettings(tokenOverride?: string) {
-    const token = tokenOverride ?? adminToken;
+  async function loadSettings() {
     setIsLoading(true);
     setErrorText("");
     setStatusText("");
+
     try {
-      const [modelsResponse, appSettingsResponse] = await Promise.all([
-        api.fetchRuntimeModels(token),
-        api.fetchRuntimeAppSettings(token),
+      const [modelsResponse, settingsResponse] = await Promise.all([
+        api.fetchModels(),
+        api.fetchRuntimeAppSettings(),
       ]);
-      setModels(modelsResponse.models);
-      setAppSettings(appSettingsResponse);
-      const nextSelection =
-        modelsResponse.models.find((model) => model.id === selectedId) ??
-        modelsResponse.models[0] ??
-        null;
-      resetModelForm(nextSelection);
-      setStatusText("Runtime settings loaded.");
+      const nextOptions = modelsResponse.models;
+      setChatModelOptions(nextOptions);
+      setAppSettings((current) => ({
+        ...current,
+        ...settingsResponse,
+        default_chat_model_slug:
+          settingsResponse.default_chat_model_slug ||
+          modelsResponse.default ||
+          nextOptions[0] ||
+          "",
+      }));
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to load settings.");
+      setErrorText(
+        error instanceof Error ? error.message : "Failed to load settings.",
+      );
     } finally {
       setIsLoading(false);
     }
   }
 
-  async function handleUnlock() {
-    sessionStorage.setItem(STORAGE_KEY, adminToken);
-    await loadSettings(adminToken);
-  }
+  useEffect(() => {
+    // Load immediately on first mount; this page has no token unlock flow.
+    void loadSettings();
+  }, []);
 
-  async function handleRefresh() {
-    await loadSettings();
-  }
-
-  function validateModelForm(payload: CreateRuntimeModelRequest): string | null {
-    if (!payload.model_slug.trim()) {
-      return "Model slug is required.";
-    }
-    if (!payload.display_name.trim()) {
-      return "Display name is required.";
-    }
-    return null;
-  }
-
-  async function handleSaveModel() {
-    const payload: CreateRuntimeModelRequest = {
-      ...modelForm,
-      model_slug: modelForm.model_slug.trim(),
-      display_name: modelForm.display_name.trim(),
-      provider_preferences: {
-        ...modelForm.provider_preferences,
-        order: providerOrderText
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-      },
-    };
-    const validationError = validateModelForm(payload);
-    if (validationError) {
-      setErrorText(validationError);
-      setStatusText("");
-      return;
-    }
-
-    setIsSavingModel(true);
-    setErrorText("");
-    setStatusText("");
-    try {
-      let saved: RuntimeModelConfig;
-      if (selectedModel) {
-        const updatePayload: UpdateRuntimeModelRequest = {
-          display_name: payload.display_name,
-          is_enabled: payload.is_enabled,
-          is_default: payload.is_default,
-          supports_chat: payload.supports_chat,
-          supports_eval: payload.supports_eval,
-          supports_langextract: payload.supports_langextract,
-          supports_embeddings: payload.supports_embeddings,
-          provider_preferences: payload.provider_preferences,
-        };
-        saved = await api.updateRuntimeModel(selectedModel.id, updatePayload, adminToken);
-      } else {
-        saved = await api.createRuntimeModel(payload, adminToken);
-      }
-
-      await loadSettings(adminToken);
-      resetModelForm(saved);
-      setStatusText(selectedModel ? "Model updated." : "Model created.");
-    } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to save model.");
-    } finally {
-      setIsSavingModel(false);
-    }
-  }
-
-  async function handleDisableModel(modelId: string) {
-    setIsSavingModel(true);
-    setErrorText("");
-    setStatusText("");
-    try {
-      await api.deleteRuntimeModel(modelId, adminToken);
-      await loadSettings(adminToken);
-      if (selectedId === modelId) {
-        resetModelForm(null);
-      }
-      setStatusText("Model disabled.");
-    } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to disable model.");
-    } finally {
-      setIsSavingModel(false);
-    }
-  }
-
-  async function handleMakeDefault(modelId: string) {
-    setIsSavingModel(true);
-    setErrorText("");
-    setStatusText("");
-    try {
-      const saved = await api.makeRuntimeModelDefault(modelId, adminToken);
-      await loadSettings(adminToken);
-      resetModelForm(saved);
-      setStatusText("Default chat model updated.");
-    } catch (error) {
-      setErrorText(
-        error instanceof Error ? error.message : "Failed to update default model.",
-      );
-    } finally {
-      setIsSavingModel(false);
-    }
-  }
-
-  function validateAppSettings(payload: UpdateRuntimeAppSettingsRequest): string | null {
+  function validateAppSettings(
+    payload: UpdateRuntimeAppSettingsRequest,
+  ): string | null {
     if (!payload.default_chat_model_slug) {
-      return "A default chat model is required.";
-    }
-    if (!payload.embedding_model_slug) {
-      return "An embedding model is required.";
-    }
-    if (!payload.langextract_model_slug) {
-      return "A LangExtract model is required.";
+      return "Choose a default chat model.";
     }
     if (
       payload.semantic_cache_ttl === undefined ||
-      !Number.isInteger(payload.semantic_cache_ttl) ||
+      Number.isNaN(payload.semantic_cache_ttl) ||
       payload.semantic_cache_ttl < 0
     ) {
-      return "Semantic cache TTL must be an integer greater than or equal to 0.";
+      return "Semantic cache TTL must be zero or a positive number.";
     }
     if (
       payload.semantic_cache_threshold === undefined ||
@@ -380,25 +236,19 @@ export function SettingsView() {
       payload.semantic_cache_threshold < 0 ||
       payload.semantic_cache_threshold > 1
     ) {
-      return "Semantic cache threshold must be between 0 and 1.";
+      return "Semantic cache threshold must stay between 0 and 1.";
     }
     if (payload.calcom_link && !isValidUrl(payload.calcom_link)) {
-      return "Booking link must be a valid URL.";
-    }
-    if (defaultChatSelect.invalid || embeddingSelect.invalid || langextractSelect.invalid) {
-      return "Resolve invalid model assignments before saving app settings.";
+      return "Cal.com link must be a valid URL.";
     }
     return null;
   }
 
-  async function handleSaveAppSettings() {
+  async function handleSaveSettings() {
     const payload: UpdateRuntimeAppSettingsRequest = {
       default_chat_model_slug: appSettings.default_chat_model_slug,
-      embedding_model_slug: appSettings.embedding_model_slug,
-      reranker_model_slug: appSettings.reranker_model_slug.trim(),
-      langextract_model_slug: appSettings.langextract_model_slug,
       semantic_cache_enabled: appSettings.semantic_cache_enabled,
-      semantic_cache_ttl: Number(appSettings.semantic_cache_ttl),
+      semantic_cache_ttl: Math.max(0, Math.round(Number(appSettings.semantic_cache_ttl))),
       semantic_cache_threshold: Number(appSettings.semantic_cache_threshold),
       calcom_link: appSettings.calcom_link.trim(),
     };
@@ -410,493 +260,287 @@ export function SettingsView() {
       return;
     }
 
-    setIsSavingSettings(true);
+    setIsSaving(true);
     setErrorText("");
     setStatusText("");
+
     try {
-      const saved = await api.updateRuntimeAppSettings(payload, adminToken);
+      const saved = await api.updateRuntimeAppSettings(payload);
       setAppSettings(saved);
-      setStatusText("App settings updated.");
+      setStatusText("Settings saved.");
     } catch (error) {
       setErrorText(
-        error instanceof Error ? error.message : "Failed to update app settings.",
+        error instanceof Error ? error.message : "Failed to save settings.",
       );
     } finally {
-      setIsSavingSettings(false);
+      setIsSaving(false);
     }
   }
 
-  return (
-    <div className="mx-auto flex h-full w-full max-w-[1280px] flex-col gap-6 overflow-y-auto px-2 pb-8 pt-6 sm:px-0">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-3">
-          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-sm dark:border-white/10 dark:bg-zinc-900/60 dark:text-zinc-400">
-            <Settings2 className="h-3.5 w-3.5" />
-            Runtime Settings
-          </div>
-          <div className="space-y-2">
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-zinc-100">
-              Internal control plane
-            </h1>
-            <p className="max-w-3xl text-sm text-slate-600 dark:text-zinc-400">
-              Change non-secret runtime behavior live without touching `.env`. The
-              database is the source of truth after bootstrap; `.env` remains for
-              secrets and one-time defaults.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 rounded-3xl border border-slate-200 bg-white/75 p-2 shadow-sm dark:border-white/10 dark:bg-zinc-900/60">
-          <div className="flex min-w-[260px] items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-zinc-950/50">
-            <KeyRound className="h-4 w-4 text-slate-400" />
-            <input
-              type="password"
-              value={adminToken}
-              onChange={(event) => setAdminToken(event.target.value)}
-              placeholder="Admin token"
-              className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400 dark:text-zinc-100"
-            />
-          </div>
-          <Button size="sm" onClick={handleUnlock} disabled={isLoading || !adminToken.trim()}>
-            {isLoading ? (
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-            ) : (
-              <ShieldAlert className="h-4 w-4" />
-            )}
-            Unlock
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleRefresh}
-            disabled={isLoading || !adminToken.trim()}
-          >
-            <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-            Refresh
-          </Button>
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white/80 px-5 py-3 text-sm text-slate-600 shadow-sm dark:border-white/10 dark:bg-zinc-900/70 dark:text-zinc-300">
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+          Loading settings
         </div>
       </div>
+    );
+  }
 
-      {errorText ? <StatusBanner tone="error" text={errorText} /> : null}
-      {statusText ? <StatusBanner tone="success" text={statusText} /> : null}
+  if (errorText && !appSettings.default_chat_model_slug) {
+    return (
+      <Card className="mx-auto mt-12 max-w-2xl rounded-[28px] border-slate-200/80 bg-white/85 shadow-lg shadow-slate-200/50 dark:border-white/10 dark:bg-zinc-900/75 dark:shadow-none">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-2 text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-xl text-slate-900 dark:text-zinc-100">
+                Settings unavailable
+              </CardTitle>
+              <CardDescription className="mt-1 text-sm leading-6 text-slate-500 dark:text-zinc-400">
+                The page loads directly without an admin token. If this deployment
+                now requires authenticated settings access, the backend will need a
+                dedicated flow for it.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <StatusBanner tone="error" text={errorText} />
+          <Button
+            onClick={() => void loadSettings()}
+            className="rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-zinc-200"
+          >
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
-      <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <Card className="border-slate-200 bg-white/75 py-0 shadow-lg dark:border-white/10 dark:bg-zinc-900/60">
-          <CardHeader className="border-b border-slate-200 py-5 dark:border-white/10">
-            <CardTitle className="text-base text-slate-900 dark:text-zinc-100">
-              Runtime model registry
+  return (
+    <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 pt-4">
+      <Card className="overflow-hidden rounded-[32px] border-slate-200/80 bg-[linear-gradient(140deg,rgba(255,255,255,0.94),rgba(247,240,229,0.94))] shadow-xl shadow-amber-100/50 dark:border-white/10 dark:bg-[linear-gradient(140deg,rgba(24,24,27,0.94),rgba(18,24,39,0.9))] dark:shadow-none">
+        <CardHeader className="gap-4 border-b border-slate-200/70 pb-6 dark:border-white/10">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-3">
+              <Badge className="w-fit rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                App status
+              </Badge>
+              <div className="space-y-2">
+                <CardTitle className="flex items-center gap-3 text-3xl tracking-tight text-slate-900 dark:text-zinc-50">
+                  <span className="rounded-2xl border border-slate-200/80 bg-white/80 p-2 text-slate-700 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-200">
+                    <Settings2 className="h-5 w-5" />
+                  </span>
+                  Settings
+                </CardTitle>
+                <CardDescription className="max-w-2xl text-sm leading-6 text-slate-600 dark:text-zinc-400">
+                  App behavior and active system models. Retrieval-critical models
+                  are code-owned so stale runtime rows cannot drift the platform.
+                </CardDescription>
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-slate-200/70 bg-white/75 px-4 py-3 text-sm shadow-sm dark:border-white/10 dark:bg-white/5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-zinc-500">
+                Semantic cache
+              </div>
+              <div className="mt-2 flex items-center gap-2 text-slate-900 dark:text-zinc-100">
+                <span
+                  className={cn(
+                    "h-2.5 w-2.5 rounded-full",
+                    appSettings.semantic_cache_enabled
+                      ? "bg-emerald-500"
+                      : "bg-slate-300 dark:bg-zinc-600",
+                  )}
+                />
+                {appSettings.semantic_cache_enabled ? "Enabled" : "Disabled"}
+              </div>
+              <div className="mt-2 text-xs text-slate-500 dark:text-zinc-400">
+                TTL {appSettings.semantic_cache_ttl}s, threshold{" "}
+                {appSettings.semantic_cache_threshold}
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-6">
+          {errorText ? <StatusBanner tone="error" text={errorText} /> : null}
+          {statusText ? <StatusBanner tone="success" text={statusText} /> : null}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <Card className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-lg shadow-slate-200/40 dark:border-white/10 dark:bg-zinc-900/70 dark:shadow-none">
+          <CardHeader>
+            <CardTitle className="text-xl tracking-tight text-slate-900 dark:text-zinc-50">
+              Active system models
             </CardTitle>
-            <CardDescription>
-              Enabled chat-capable models appear in the arena model picker.
+            <CardDescription className="text-sm leading-6 text-slate-500 dark:text-zinc-400">
+              These are the live model assignments the app is using right now.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 p-4">
-            <Button variant="outline" className="w-full justify-center" onClick={() => resetModelForm(null)}>
-              <Plus className="h-4 w-4" />
-              Add model
-            </Button>
-
-            <div className="space-y-2">
-              {models.map((model) => (
-                <button
-                  key={model.id}
-                  type="button"
-                  onClick={() => resetModelForm(model)}
-                  className={cn(
-                    "w-full rounded-2xl border px-4 py-3 text-left transition-all",
-                    selectedId === model.id
-                      ? "border-orange-300 bg-orange-50/80 shadow-sm dark:border-orange-500/40 dark:bg-orange-500/10"
-                      : "border-slate-200 bg-slate-50/80 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-zinc-950/40 dark:hover:border-white/20",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-slate-800 dark:text-zinc-100">
-                        {model.display_name}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-zinc-400">
-                        {model.model_slug}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1">
-                      {model.is_default ? <Badge variant="secondary">Default</Badge> : null}
-                      {!model.is_enabled ? <Badge variant="outline">Disabled</Badge> : null}
-                    </div>
-                  </div>
-                </button>
-              ))}
-
-              {!models.length ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500 dark:border-white/10 dark:text-zinc-400">
-                  Unlock settings to load runtime models.
-                </div>
-              ) : null}
-            </div>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            {activeModels.map((model) => (
+              <ModelCard
+                key={model.label}
+                label={model.label}
+                value={model.value}
+                hint={model.hint}
+              />
+            ))}
           </CardContent>
         </Card>
 
-        <div className="grid gap-6">
-          <Card className="border-slate-200 bg-white/75 py-0 shadow-lg dark:border-white/10 dark:bg-zinc-900/60">
-            <CardHeader className="border-b border-slate-200 py-5 dark:border-white/10">
-              <CardTitle className="text-base text-slate-900 dark:text-zinc-100">
-                {selectedModel ? "Edit model" : "Create model"}
-              </CardTitle>
-              <CardDescription>
-                Use provider order only when you need deterministic OpenRouter routing.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 p-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                    Display name
-                  </span>
-                  <input
-                    value={modelForm.display_name}
-                    onChange={(event) =>
-                      setModelForm((current) => ({
-                        ...current,
-                        display_name: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-zinc-950/40 dark:text-zinc-100"
-                    placeholder="Gemini 2.5 Flash"
-                  />
-                </label>
+        <Card className="rounded-[28px] border-slate-200/80 bg-white/85 shadow-lg shadow-slate-200/40 dark:border-white/10 dark:bg-zinc-900/70 dark:shadow-none">
+          <CardHeader>
+            <CardTitle className="text-xl tracking-tight text-slate-900 dark:text-zinc-50">
+              App behavior
+            </CardTitle>
+            <CardDescription className="text-sm leading-6 text-slate-500 dark:text-zinc-400">
+              Small runtime controls that remain safe to edit.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <FieldLabel
+                title="Default chat model"
+                description="Used when a chat or compare request does not pin a specific model."
+              />
+              <select
+                value={appSettings.default_chat_model_slug}
+                onChange={(event) =>
+                  setAppSettings((current) => ({
+                    ...current,
+                    default_chat_model_slug: event.target.value,
+                  }))
+                }
+                className="flex h-12 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:bg-white dark:border-white/10 dark:bg-zinc-950/50 dark:text-zinc-100 dark:focus:border-white/20"
+              >
+                {availableChatModels.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-                <label className="space-y-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                    Model slug
-                  </span>
-                  <input
-                    value={modelForm.model_slug}
-                    onChange={(event) =>
-                      setModelForm((current) => ({
-                        ...current,
-                        model_slug: event.target.value,
-                      }))
-                    }
-                    disabled={Boolean(selectedModel)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-orange-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-zinc-950/40 dark:text-zinc-100"
-                    placeholder="google/gemini-2.5-flash"
-                  />
-                </label>
-              </div>
+            <ToggleRow
+              checked={appSettings.semantic_cache_enabled}
+              label="Semantic cache enabled"
+              description="Keeps near-duplicate requests fast when the similarity threshold is met."
+              onCheckedChange={(checked) =>
+                setAppSettings((current) => ({
+                  ...current,
+                  semantic_cache_enabled: checked,
+                }))
+              }
+            />
 
-              <label className="space-y-2">
-                <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                  Provider order
-                </span>
-                <textarea
-                  value={providerOrderText}
-                  onChange={(event) => setProviderOrderText(event.target.value)}
-                  rows={4}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-zinc-950/40 dark:text-zinc-100"
-                  placeholder="google-ai-studio, vertex-ai"
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <FieldLabel
+                  title="Cache TTL"
+                  description="Seconds before cached semantic matches expire. Use 0 to disable retention."
                 />
-                <p className="text-xs text-slate-500 dark:text-zinc-400">
-                  Comma-separated provider slugs in priority order.
-                </p>
-              </label>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <ToggleRow
-                  checked={modelForm.is_enabled}
-                  label="Enabled"
-                  description="Expose this model to runtime systems."
-                  onCheckedChange={(checked) =>
-                    setModelForm((current) => ({ ...current, is_enabled: checked }))
-                  }
-                />
-                <ToggleRow
-                  checked={modelForm.is_default}
-                  label="Default chat model"
-                  description="Used when the chat request does not specify a model."
-                  onCheckedChange={(checked) =>
-                    setModelForm((current) => ({ ...current, is_default: checked }))
-                  }
-                />
-                <ToggleRow
-                  checked={modelForm.supports_chat}
-                  label="Supports chat"
-                  description="Eligible for the main arena chat picker."
-                  onCheckedChange={(checked) =>
-                    setModelForm((current) => ({ ...current, supports_chat: checked }))
-                  }
-                />
-                <ToggleRow
-                  checked={modelForm.supports_eval}
-                  label="Supports eval"
-                  description="Available for judge/evaluation workflows."
-                  onCheckedChange={(checked) =>
-                    setModelForm((current) => ({ ...current, supports_eval: checked }))
-                  }
-                />
-                <ToggleRow
-                  checked={modelForm.supports_embeddings}
-                  label="Supports embeddings"
-                  description="Eligible for embedding assignment in app settings."
-                  onCheckedChange={(checked) =>
-                    setModelForm((current) => ({
-                      ...current,
-                      supports_embeddings: checked,
-                    }))
-                  }
-                />
-                <ToggleRow
-                  checked={modelForm.supports_langextract}
-                  label="Supports langextract"
-                  description="Eligible for metadata enrichment assignment."
-                  onCheckedChange={(checked) =>
-                    setModelForm((current) => ({
-                      ...current,
-                      supports_langextract: checked,
-                    }))
-                  }
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <Button onClick={handleSaveModel} disabled={isSavingModel || isLoading}>
-                  {isSavingModel ? (
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  {selectedModel ? "Save model" : "Create model"}
-                </Button>
-                {selectedModel ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleMakeDefault(selectedModel.id)}
-                      disabled={isSavingModel || isLoading || !selectedModel.is_enabled || !selectedModel.supports_chat}
-                    >
-                      <Star className="h-4 w-4" />
-                      Make default
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleDisableModel(selectedModel.id)}
-                      disabled={isSavingModel || isLoading || !selectedModel.is_enabled}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Disable
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 bg-white/75 py-0 shadow-lg dark:border-white/10 dark:bg-zinc-900/60">
-            <CardHeader className="border-b border-slate-200 py-5 dark:border-white/10">
-              <CardTitle className="text-base text-slate-900 dark:text-zinc-100">
-                Runtime app settings
-              </CardTitle>
-              <CardDescription>
-                These settings apply to new requests immediately and persist across restarts.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 p-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <ModelSelectField
-                  label="Default chat model"
-                  value={defaultChatSelect.selectValue}
-                  invalidValue={defaultChatSelect.invalid}
-                  options={chatModelOptions}
-                  placeholder="Select chat model"
-                  onValueChange={(value) =>
+                <input
+                  type="number"
+                  min={0}
+                  value={appSettings.semantic_cache_ttl}
+                  onChange={(event) =>
                     setAppSettings((current) => ({
                       ...current,
-                      default_chat_model_slug: value,
+                      semantic_cache_ttl: Number(event.target.value),
                     }))
                   }
+                  className="flex h-12 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:bg-white dark:border-white/10 dark:bg-zinc-950/50 dark:text-zinc-100 dark:focus:border-white/20"
                 />
-                <ModelSelectField
-                  label="Embedding model"
-                  value={embeddingSelect.selectValue}
-                  invalidValue={embeddingSelect.invalid}
-                  options={embeddingModelOptions}
-                  placeholder="Select embedding model"
-                  onValueChange={(value) =>
-                    setAppSettings((current) => ({
-                      ...current,
-                      embedding_model_slug: value,
-                    }))
-                  }
-                />
-                <ModelSelectField
-                  label="LangExtract model"
-                  value={langextractSelect.selectValue}
-                  invalidValue={langextractSelect.invalid}
-                  options={langextractModelOptions}
-                  placeholder="Select langextract model"
-                  onValueChange={(value) =>
-                    setAppSettings((current) => ({
-                      ...current,
-                      langextract_model_slug: value,
-                    }))
-                  }
-                />
-                <label className="space-y-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                    Reranker model slug
-                  </span>
-                  <input
-                    value={appSettings.reranker_model_slug}
-                    onChange={(event) =>
-                      setAppSettings((current) => ({
-                        ...current,
-                        reranker_model_slug: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-zinc-950/40 dark:text-zinc-100"
-                    placeholder="BAAI/bge-reranker-v2-m3"
-                  />
-                </label>
               </div>
 
-              {(defaultChatSelect.invalid || embeddingSelect.invalid || langextractSelect.invalid) ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="space-y-1">
-                      <p>One or more saved model assignments no longer match enabled capability-compatible models.</p>
-                      <p>Choose valid replacements before saving.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <ToggleRow
-                  checked={appSettings.semantic_cache_enabled}
-                  label="Semantic cache enabled"
-                  description="Allow semantic cache lookups for eligible flows."
-                  onCheckedChange={(checked) =>
+              <div className="space-y-2">
+                <FieldLabel
+                  title="Cache threshold"
+                  description="Similarity score required before a semantic cache hit is reused."
+                />
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step="0.01"
+                  value={appSettings.semantic_cache_threshold}
+                  onChange={(event) =>
                     setAppSettings((current) => ({
                       ...current,
-                      semantic_cache_enabled: checked,
+                      semantic_cache_threshold: Number(event.target.value),
                     }))
                   }
+                  className="flex h-12 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:bg-white dark:border-white/10 dark:bg-zinc-950/50 dark:text-zinc-100 dark:focus:border-white/20"
                 />
-
-                <label className="space-y-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                    Booking link
-                  </span>
-                  <input
-                    value={appSettings.calcom_link}
-                    onChange={(event) =>
-                      setAppSettings((current) => ({
-                        ...current,
-                        calcom_link: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-zinc-950/40 dark:text-zinc-100"
-                    placeholder="https://cal.com/your-team/demo"
-                  />
-                </label>
-
-                <label className="space-y-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                    Semantic cache TTL (seconds)
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={appSettings.semantic_cache_ttl}
-                    onChange={(event) =>
-                      setAppSettings((current) => ({
-                        ...current,
-                        semantic_cache_ttl: Number(event.target.value),
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-zinc-950/40 dark:text-zinc-100"
-                  />
-                </label>
-
-                <label className="space-y-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                    Semantic cache threshold
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={appSettings.semantic_cache_threshold}
-                    onChange={(event) =>
-                      setAppSettings((current) => ({
-                        ...current,
-                        semantic_cache_threshold: Number(event.target.value),
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-zinc-950/40 dark:text-zinc-100"
-                  />
-                </label>
               </div>
+            </div>
 
-              <div className="flex items-center gap-3">
-                <Button onClick={handleSaveAppSettings} disabled={isSavingSettings || isLoading}>
-                  {isSavingSettings ? (
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  Save app settings
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+            <div className="space-y-2">
+              <FieldLabel
+                title="Cal.com link"
+                description="Optional booking URL surfaced in product touchpoints."
+              />
+              <input
+                type="url"
+                value={appSettings.calcom_link}
+                onChange={(event) =>
+                  setAppSettings((current) => ({
+                    ...current,
+                    calcom_link: event.target.value,
+                  }))
+                }
+                placeholder="https://cal.com/your-team/demo"
+                className="flex h-12 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white dark:border-white/10 dark:bg-zinc-950/50 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-white/20"
+              />
+            </div>
+
+            <Button
+              onClick={() => void handleSaveSettings()}
+              disabled={isSaving || availableChatModels.length === 0}
+              className="w-full rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-zinc-200"
+            >
+              {isSaving ? (
+                <>
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Saving
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  Save changes
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
       </div>
-    </div>
-  );
-}
 
-function ModelSelectField({
-  label,
-  value,
-  invalidValue,
-  options,
-  placeholder,
-  onValueChange,
-}: {
-  label: string;
-  value: string;
-  invalidValue: string | null;
-  options: RuntimeModelConfig[];
-  placeholder: string;
-  onValueChange: (value: string) => void;
-}) {
-  return (
-    <label className="space-y-2">
-      <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-        {label}
-      </span>
-      <Select value={value || undefined} onValueChange={onValueChange}>
-        <SelectTrigger className="w-full rounded-xl border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40">
-          <SelectValue placeholder={placeholder} />
-        </SelectTrigger>
-        <SelectContent>
-          {invalidValue ? (
-            <SelectItem value={invalidValue}>Invalid: {invalidValue}</SelectItem>
-          ) : null}
-          {options.map((option) => (
-            <SelectItem key={option.id} value={option.model_slug}>
-              {option.display_name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {invalidValue ? (
-        <p className="text-xs text-amber-700 dark:text-amber-300">
-          Saved value is invalid: {invalidValue}
-        </p>
-      ) : null}
-    </label>
+      <Card className="rounded-[28px] border-slate-200/80 bg-white/80 shadow-lg shadow-slate-200/30 dark:border-white/10 dark:bg-zinc-900/60 dark:shadow-none">
+        <CardHeader>
+          <CardTitle className="text-lg tracking-tight text-slate-900 dark:text-zinc-50">
+            System notes
+          </CardTitle>
+          <CardDescription className="text-sm leading-6 text-slate-500 dark:text-zinc-400">
+            The settings page is intentionally narrow.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm leading-6 text-slate-600 dark:text-zinc-300">
+          <div className="rounded-[22px] border border-slate-200/70 bg-slate-50/70 px-4 py-3 dark:border-white/10 dark:bg-zinc-950/40">
+            Embedding, reranker, and langextract are platform-managed for now so
+            boot-time config always wins over stale runtime rows.
+          </div>
+          <div className="rounded-[22px] border border-slate-200/70 bg-slate-50/70 px-4 py-3 dark:border-white/10 dark:bg-zinc-950/40">
+            Runtime model registry controls and token-gated admin workflows are
+            intentionally deferred from this product surface.
+          </div>
+        </CardContent>
+      </Card>
+    </section>
   );
 }

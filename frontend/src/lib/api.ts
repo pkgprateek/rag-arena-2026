@@ -204,9 +204,9 @@ export const api = {
         return res.json();
     },
 
-    fetchRuntimeAppSettings: async (adminToken?: string): Promise<RuntimeAppSettings> => {
+    fetchRuntimeAppSettings: async (): Promise<RuntimeAppSettings> => {
         const res = await fetchOrThrow(`${API_BASE}/settings/app`, {
-            headers: withAdminHeaders(adminToken),
+            headers: undefined,
         }, "Could not load app settings because the backend is unreachable.");
         if (!res.ok) {
             const text = await res.text().catch(() => "Failed to fetch app settings");
@@ -217,13 +217,11 @@ export const api = {
 
     updateRuntimeAppSettings: async (
         request: UpdateRuntimeAppSettingsRequest,
-        adminToken?: string,
     ): Promise<RuntimeAppSettings> => {
         const res = await fetchOrThrow(`${API_BASE}/settings/app`, {
             method: "PATCH",
             headers: {
                 "Content-Type": "application/json",
-                ...(withAdminHeaders(adminToken) || {}),
             },
             body: JSON.stringify(request),
         }, "Could not update app settings because the backend is unreachable.");
