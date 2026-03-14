@@ -53,7 +53,7 @@ Technologies:
 
 ## Tier 3: Enterprise
 
-`Prompt + visible docs -> semantic cache lookup -> ensure current tier ready -> Docling/direct parsing -> semantic chunking -> query orchestration -> dense + sparse retrieval -> reciprocal rank fusion -> BGE reranking -> diversity control -> strict grounded context assembly -> OpenRouter generation -> eval -> semantic cache write`
+`Prompt + visible docs -> semantic cache lookup -> ensure current tier ready -> Docling/direct parsing -> semantic chunking -> query orchestration -> dense + sparse retrieval -> reciprocal rank fusion -> local llama.cpp reranking -> diversity control -> strict grounded context assembly -> OpenRouter generation -> eval -> semantic cache write`
 
 Technologies:
 
@@ -62,12 +62,12 @@ Technologies:
 - Semantic cache: Redis + OpenRouter embeddings
 - Dense retrieval: Chroma
 - Sparse retrieval: in-process keyword scoring
-- Reranking: FlagEmbedding / BGE reranker
+- Reranking: Qwen3 GGUF reranker over localhost HTTP via llama.cpp
 - Generation: OpenRouter
 
 ## Tier 4: Modern
 
-`Prompt + visible docs -> semantic cache lookup -> ensure current tier ready -> Docling/direct parsing -> layout/page-aware chunking -> LangExtract enrichment -> dense + sparse retrieval -> reciprocal rank fusion -> contextual metadata boosts -> BGE reranking -> diversity control -> strict document-native context assembly -> OpenRouter generation -> eval -> semantic cache write`
+`Prompt + visible docs -> semantic cache lookup -> ensure current tier ready -> Docling/direct parsing -> layout/page-aware chunking -> LangExtract enrichment -> dense + sparse retrieval -> reciprocal rank fusion -> contextual metadata boosts -> local llama.cpp reranking -> diversity control -> strict document-native context assembly -> OpenRouter generation -> eval -> semantic cache write`
 
 Technologies:
 
@@ -76,7 +76,7 @@ Technologies:
 - Enrichment: `langextract.py`
 - Dense retrieval: Chroma
 - Sparse retrieval: in-process keyword scoring
-- Reranking: FlagEmbedding / BGE reranker
+- Reranking: Qwen3 GGUF reranker over localhost HTTP via llama.cpp
 - Generation: OpenRouter
 
 ## Notes
