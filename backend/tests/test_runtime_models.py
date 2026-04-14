@@ -1,0 +1,339 @@
+import os
+import tempfile
+import unittest
+import importlib.util
+from unittest.mock import AsyncMock, Mock, patch
+
+from fastapi import HTTPException
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.config import settings
+from app.db.database import Base
+from app.db.models import DBRuntimeSetting
+from app.models import (
+    CreateRuntimeModelRequest,
+    ProviderPreferences,
+    UpdateRuntimeAppSettingsRequest,
+)
+import app.main as app_main
+from app.models import RuntimeModelConfig
+import app.services.embeddings as embeddings_service
+from app.services.openrouter import build_provider_preferences, normalize_model_spec
+from app.services.runtime_models import (
+    bootstrap_runtime_models,
+    create_runtime_model,
+    disable_runtime_model,
+    get_enabled_chat_models,
+    get_model_for_capability,
+    resolve_chat_model,
+)
+from app.services.runtime_settings import (
+    bootstrap_runtime_settings,
+    get_runtime_app_settings,
+    update_runtime_app_settings,
+)
+
+
+class RuntimeModelServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        if importlib.util.find_spec("greenlet") is None:
+            self.skipTest("greenlet is not installed in this environment")
+        self._settings_backup = {
+            "default_model": settings.default_model,
+            "langextract_model": settings.langextract_model,
+            "embedding_model": settings.embedding_model,
+            "reranker_model": settings.reranker_model,
+            "semantic_cache_enabled": settings.semantic_cache_enabled,
+            "semantic_cache_ttl": settings.semantic_cache_ttl,
+            "semantic_cache_threshold": settings.semantic_cache_threshold,
+            "calcom_link": settings.calcom_link,
+        }
+        settings.default_model = "openrouter/openai/gpt-oss-20b"
+        settings.langextract_model = "openrouter/openai/gpt-oss-20b"
+        settings.embedding_model = "openrouter/qwen/qwen3-embedding-8b"
+        settings.reranker_model = "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"
+        settings.semantic_cache_enabled = True
+        settings.semantic_cache_ttl = 3600
+        settings.semantic_cache_threshold = 0.92
+        settings.calcom_link = "https://cal.example.com/team/demo"
+
+        handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        handle.close()
+        self._db_path = handle.name
+        self.engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self.session_factory = async_sessionmaker(
+            self.engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    async def asyncTearDown(self) -> None:
+        for key, value in self._settings_backup.items():
+            setattr(settings, key, value)
+        await self.engine.dispose()
+        if os.path.exists(self._db_path):
+            os.unlink(self._db_path)
+
+    async def test_bootstrap_runtime_models_and_default_selection(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_models(session)
+            models, default = await get_enabled_chat_models(session)
+            selection = await resolve_chat_model(session, "")
+            constrained = await resolve_chat_model(session, "openai/gpt-oss-120b")
+            embedding = await get_model_for_capability(session, "embeddings")
+
+        self.assertIn("openai/gpt-oss-20b", models)
+        self.assertIn("openai/gpt-oss-120b", models)
+        self.assertEqual(default, "openai/gpt-oss-20b")
+        self.assertEqual(selection.runtime_model.model_slug, "openai/gpt-oss-20b")
+        self.assertEqual(selection.runtime_model.provider_preferences.sort, "price")
+        self.assertEqual(
+            constrained.runtime_model.provider_preferences.only,
+            ["atlas-cloud/fp8", "google-vertex"],
+        )
+        self.assertIsNotNone(embedding)
+        self.assertEqual(embedding.model_slug, "qwen/qwen3-embedding-8b")
+        self.assertTrue(embedding.supports_embeddings)
+        self.assertEqual(embedding.provider_preferences.sort, "price")
+
+    async def test_disable_default_promotes_next_chat_model(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_models(session)
+            original = await resolve_chat_model(session, "")
+            second = await resolve_chat_model(session, "openai/gpt-oss-120b")
+            await disable_runtime_model(session, original.runtime_model.id)
+            models, default = await get_enabled_chat_models(session)
+
+        self.assertNotIn("openai/gpt-oss-20b", models)
+        self.assertEqual(default, second.public_name)
+
+    async def test_create_runtime_model_rejects_strict_provider_without_order(self) -> None:
+        async with self.session_factory() as session:
+            with self.assertRaises(HTTPException):
+                await create_runtime_model(
+                    session,
+                    CreateRuntimeModelRequest(
+                        model_slug="google/gemini-2.5-pro",
+                        display_name="Gemini 2.5 Pro",
+                        is_enabled=True,
+                        is_default=False,
+                        supports_chat=True,
+                        supports_eval=True,
+                        supports_langextract=False,
+                        supports_embeddings=False,
+                        provider_preferences=ProviderPreferences(
+                            order=[],
+                            allow_fallbacks=False,
+                            require_parameters=True,
+                        ),
+                    ),
+                )
+
+    async def test_runtime_app_settings_sync_with_default_model(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_settings(session)
+            await bootstrap_runtime_models(session)
+
+            initial = await get_runtime_app_settings(session)
+            self.assertEqual(initial.default_chat_model_slug, "openai/gpt-oss-20b")
+            self.assertEqual(
+                initial.embedding_model, "openrouter/qwen/qwen3-embedding-8b"
+            )
+            self.assertEqual(
+                initial.reranker_model, "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"
+            )
+            self.assertEqual(
+                initial.langextract_model, "openrouter/openai/gpt-oss-20b"
+            )
+            self.assertTrue(initial.semantic_cache_enabled)
+
+            updated = await update_runtime_app_settings(
+                session,
+                UpdateRuntimeAppSettingsRequest(
+                    default_chat_model_slug="openai/gpt-oss-120b",
+                    semantic_cache_enabled=False,
+                    semantic_cache_ttl=120,
+                    semantic_cache_threshold=0.88,
+                    calcom_link="https://cal.example.com/new-link",
+                ),
+            )
+            models, default = await get_enabled_chat_models(session)
+
+        self.assertIn("openai/gpt-oss-120b", models)
+        self.assertEqual(default, "openai/gpt-oss-120b")
+        self.assertEqual(updated.default_chat_model_slug, default)
+        self.assertFalse(updated.semantic_cache_enabled)
+        self.assertEqual(updated.semantic_cache_ttl, 120)
+        self.assertEqual(updated.semantic_cache_threshold, 0.88)
+        self.assertEqual(updated.calcom_link, "https://cal.example.com/new-link")
+
+    async def test_runtime_settings_bootstrap_removes_deprecated_model_rows(self) -> None:
+        async with self.session_factory() as session:
+            session.add(
+                DBRuntimeSetting(
+                    key="embedding_model_slug", value="openai/text-embedding-3-small"
+                )
+            )
+            session.add(
+                DBRuntimeSetting(
+                    key="reranker_model_slug", value="BAAI/bge-reranker-v2-m3"
+                )
+            )
+            session.add(
+                DBRuntimeSetting(
+                    key="langextract_model_slug", value="openrouter/meta-llama/test"
+                )
+            )
+            session.add(DBRuntimeSetting(key="embedding_model", value="legacy-embedder"))
+            session.add(DBRuntimeSetting(key="reranker_model", value="legacy-reranker"))
+            session.add(DBRuntimeSetting(key="semantic_cache_ttl", value="42"))
+            await session.commit()
+
+            await bootstrap_runtime_settings(session)
+            current = await get_runtime_app_settings(session)
+            remaining = {
+                row.key: row.value
+                for row in (
+                    await session.execute(
+                        select(DBRuntimeSetting).order_by(DBRuntimeSetting.key.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            }
+
+        self.assertEqual(current.embedding_model, "openrouter/qwen/qwen3-embedding-8b")
+        self.assertEqual(
+            current.reranker_model, "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"
+        )
+        self.assertEqual(current.langextract_model, "openrouter/openai/gpt-oss-20b")
+        self.assertEqual(current.semantic_cache_ttl, 42)
+        self.assertNotIn("embedding_model_slug", remaining)
+        self.assertNotIn("reranker_model_slug", remaining)
+        self.assertNotIn("langextract_model_slug", remaining)
+        self.assertNotIn("embedding_model", remaining)
+        self.assertNotIn("reranker_model", remaining)
+
+    async def test_runtime_settings_reject_invalid_numeric_ranges(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_settings(session)
+            await bootstrap_runtime_models(session)
+
+            with self.assertRaises(ValidationError):
+                UpdateRuntimeAppSettingsRequest(semantic_cache_ttl=-1)
+
+            with self.assertRaises(ValidationError):
+                UpdateRuntimeAppSettingsRequest(semantic_cache_threshold=1.1)
+
+    async def test_runtime_settings_rejects_deprecated_model_updates(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_settings(session)
+            await bootstrap_runtime_models(session)
+
+            with self.assertRaises(HTTPException) as context:
+                await update_runtime_app_settings(
+                    session,
+                    UpdateRuntimeAppSettingsRequest(
+                        embedding_model_slug="openai/gpt-oss-20b"
+                    ),
+                )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("platform-managed", str(context.exception.detail))
+
+    async def test_models_handler_returns_expected_shape(self) -> None:
+        async with self.session_factory() as session:
+            await bootstrap_runtime_settings(session)
+            await bootstrap_runtime_models(session)
+
+        with patch.object(app_main, "AsyncSessionLocal", self.session_factory):
+            payload = await app_main.list_models()
+
+        self.assertEqual(
+            payload,
+            {
+                "models": [
+                    "openai/gpt-oss-20b",
+                    "openai/gpt-oss-120b",
+                ],
+                "default": "openai/gpt-oss-20b",
+            },
+        )
+
+
+class OpenRouterHelperTests(unittest.TestCase):
+    def test_normalize_model_spec(self) -> None:
+        self.assertEqual(
+            normalize_model_spec("openrouter/google/gemini-2.5-flash"),
+            "google/gemini-2.5-flash",
+        )
+        self.assertEqual(normalize_model_spec("google/gemini-2.5-flash"), "google/gemini-2.5-flash")
+
+    def test_build_provider_preferences(self) -> None:
+        payload = build_provider_preferences(
+            ProviderPreferences(
+                order=["google-ai-studio", "vertex-ai"],
+                allow_fallbacks=False,
+                require_parameters=True,
+            )
+        )
+        self.assertEqual(payload["order"], ["google-ai-studio", "vertex-ai"])
+        self.assertFalse(payload["allow_fallbacks"])
+        self.assertTrue(payload["require_parameters"])
+
+
+class EmbeddingServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self._api_key_backup = settings.openrouter_api_key
+        settings.openrouter_api_key = "test-key"
+
+    async def asyncTearDown(self) -> None:
+        settings.openrouter_api_key = self._api_key_backup
+
+    async def test_embedder_uses_runtime_provider_preferences(self) -> None:
+        runtime_model = RuntimeModelConfig(
+            id="embedder-model",
+            model_slug="qwen/qwen3-embedding-8b",
+            display_name="Qwen 3 Embedding 8B",
+            supports_chat=False,
+            supports_eval=False,
+            supports_embeddings=True,
+            provider_preferences=ProviderPreferences(
+                allow_fallbacks=True,
+                require_parameters=True,
+                sort="price",
+            ),
+        )
+        response = Mock()
+        response.json.return_value = {"data": [{"index": 0, "embedding": [0.1, 0.2]}]}
+        response.raise_for_status.return_value = None
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = None
+
+        with (
+            patch.object(
+                embeddings_service,
+                "get_model_for_capability",
+                AsyncMock(return_value=runtime_model),
+            ),
+            patch.object(embeddings_service.httpx, "AsyncClient", return_value=client),
+        ):
+            embedder = embeddings_service.APIEmbedder()
+            result = await embedder.encode(["hello"])
+
+        self.assertEqual(result, [[0.1, 0.2]])
+        client.post.assert_awaited_once()
+        request_payload = client.post.await_args.kwargs["json"]
+        self.assertEqual(request_payload["model"], "qwen/qwen3-embedding-8b")
+        self.assertEqual(request_payload["provider"]["sort"], "price")
+        self.assertTrue(request_payload["provider"]["allow_fallbacks"])
+
+
+if __name__ == "__main__":
+    unittest.main()

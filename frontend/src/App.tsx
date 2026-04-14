@@ -14,18 +14,12 @@ import { PostCompareCTA } from "@/components/marketing/PostCompareCTA";
 import { UploadModal } from "@/components/docs/UploadModal";
 import { useChat } from "@/hooks/useChat";
 import { useCompare } from "@/hooks/useCompare";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import { useUIStore } from "@/stores/uiStore";
-import { TIERS } from "@/lib/constants";
+import { useTierProfilesStore } from "@/stores/tierProfilesStore";
 import { api } from "@/lib/api";
 import { Sun, Moon } from "lucide-react";
-import type { Tier } from "@/types";
-
-interface UploadedDoc {
-  doc_id: string;
-  filename: string;
-  chunks: number;
-  scope: "global" | "session";
-}
+import type { DocListItem, Tier } from "@/types";
 
 interface SessionListItem {
   id: string;
@@ -34,23 +28,43 @@ interface SessionListItem {
   tier: Tier;
 }
 
+const PENDING_GLOBAL_DOCS_STORAGE_KEY = "pending-global-docs";
+const PENDING_GLOBAL_DOC_TTL_MS = 5 * 60 * 1000;
+
+interface PendingGlobalDocEntry {
+  clientId: string;
+  filename: string;
+  queuedAt: number;
+  tier: Tier;
+}
+
 function App() {
   const chat = useChat();
   const compare = useCompare();
   const ui = useUIStore();
+  const setTierProfiles = useTierProfilesStore((state) => state.setProfiles);
+  const { tiers } = useTierCatalog();
   const navigate = useNavigate();
   const location = useLocation();
   const isComparePage = location.pathname === "/compare";
 
-  const [globalDocs, setGlobalDocs] = useState<UploadedDoc[]>([]);
-  const [sessionDocs, setSessionDocs] = useState<UploadedDoc[]>([]);
+  const [globalDocs, setGlobalDocs] = useState<DocListItem[]>([]);
+  const [sessionDocs, setSessionDocs] = useState<DocListItem[]>([]);
+  const [pendingGlobalDocs, setPendingGlobalDocs] = useState<PendingGlobalDocEntry[]>([]);
   const [dbSessions, setDbSessions] = useState<SessionListItem[]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [isMainAreaDragging, setIsMainAreaDragging] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const dragCounter = React.useRef(0);
+  const didRestoreSession = React.useRef(false);
+  const previousStreamingState = React.useRef(false);
+  const previousCompareRunningState = React.useRef(false);
 
   React.useEffect(() => {
+    if (!chat.isHydrated) {
+      return;
+    }
     api
       .fetchSessions()
       .then((data) => {
@@ -61,9 +75,66 @@ function App() {
           tier: s.tier,
         }));
         setDbSessions(mapped);
+        setSessionsLoaded(true);
       })
-      .catch((err) => console.error("Failed to fetch sessions from DB:", err));
-  }, [chat.sessionId, chat.hasInteracted]);
+      .catch((err) => {
+        console.error("Failed to fetch sessions from DB:", err);
+        setSessionsLoaded(true);
+      });
+  }, [chat.hasInteracted, chat.isHydrated, chat.sessionId]);
+
+  React.useEffect(() => {
+    api
+      .fetchTierProfiles()
+      .then((profiles) => setTierProfiles(profiles))
+      .catch((err) => console.error("Failed to fetch tier profiles:", err));
+  }, [setTierProfiles]);
+
+  React.useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PENDING_GLOBAL_DOCS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PendingGlobalDocEntry[];
+      const now = Date.now();
+      setPendingGlobalDocs(
+        parsed.filter((entry) => now - entry.queuedAt < PENDING_GLOBAL_DOC_TTL_MS),
+      );
+    } catch (err) {
+      console.error("Failed to hydrate pending global docs:", err);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    sessionStorage.setItem(
+      PENDING_GLOBAL_DOCS_STORAGE_KEY,
+      JSON.stringify(pendingGlobalDocs),
+    );
+  }, [pendingGlobalDocs]);
+
+  React.useEffect(() => {
+    if (!chat.isHydrated) {
+      return;
+    }
+    const refreshDocs = async () => {
+      try {
+        const response = await api.listDocs(chat.sessionId);
+        const liveGlobalDocs = response.documents.filter((doc) => doc.scope === "global");
+        setGlobalDocs(liveGlobalDocs);
+        setSessionDocs(response.documents.filter((doc) => doc.scope === "session"));
+        setPendingGlobalDocs((prev) =>
+          prev.filter(
+            (entry) =>
+              Date.now() - entry.queuedAt < PENDING_GLOBAL_DOC_TTL_MS &&
+              !liveGlobalDocs.some((doc) => doc.filename === entry.filename),
+          ),
+        );
+      } catch (err) {
+        console.error("Failed to fetch docs:", err);
+      }
+    };
+
+    void refreshDocs();
+  }, [chat.isHydrated, chat.sessionId]);
 
   React.useEffect(() => {
     const stored = localStorage.getItem("ui-theme");
@@ -94,27 +165,165 @@ function App() {
     .reverse()
     .find((m) => m.role === "assistant" && !m.isStreaming);
 
-  const handleDocUploaded = (doc: UploadedDoc) => {
-    if (doc.scope === "global") {
-      setGlobalDocs((prev) => [
-        ...prev.filter((d) => d.doc_id !== doc.doc_id),
-        doc,
-      ]);
+  const refreshDocs = React.useCallback(async () => {
+    if (!chat.isHydrated) {
       return;
     }
-    setSessionDocs((prev) => [
-      ...prev.filter((d) => d.doc_id !== doc.doc_id),
-      doc,
-    ]);
-  };
+    const response = await api.listDocs(chat.sessionId);
+    const liveGlobalDocs = response.documents.filter((doc) => doc.scope === "global");
+    setGlobalDocs(liveGlobalDocs);
+    setSessionDocs(response.documents.filter((doc) => doc.scope === "session"));
+    setPendingGlobalDocs((prev) =>
+      prev.filter(
+        (entry) =>
+          Date.now() - entry.queuedAt < PENDING_GLOBAL_DOC_TTL_MS &&
+          !liveGlobalDocs.some((doc) => doc.filename === entry.filename),
+        ),
+      );
+  }, [chat.isHydrated, chat.sessionId]);
+
+  React.useEffect(() => {
+    if (!chat.isHydrated) {
+      previousStreamingState.current = chat.isStreaming;
+      return;
+    }
+
+    const didJustFinishStreaming =
+      previousStreamingState.current && !chat.isStreaming;
+    previousStreamingState.current = chat.isStreaming;
+
+    if (!didJustFinishStreaming) {
+      return;
+    }
+
+    if (globalDocs.length === 0 && sessionDocs.length === 0) {
+      return;
+    }
+
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after completion:", err),
+    );
+  }, [
+    chat.isHydrated,
+    chat.isStreaming,
+    globalDocs.length,
+    refreshDocs,
+    sessionDocs.length,
+  ]);
+
+  React.useEffect(() => {
+    if (!chat.isHydrated || !sessionsLoaded || didRestoreSession.current) {
+      return;
+    }
+
+    didRestoreSession.current = true;
+    const matchingSession = dbSessions.find((session) => session.id === chat.sessionId);
+
+    if (!matchingSession) {
+      chat.startNewSession(chat.currentTier);
+      return;
+    }
+
+    void chat.loadSession(chat.sessionId);
+  }, [
+    chat.currentTier,
+    chat.isHydrated,
+    chat.loadSession,
+    chat.sessionId,
+    chat.startNewSession,
+    dbSessions,
+    sessionsLoaded,
+  ]);
+
+  React.useEffect(() => {
+    const didJustFinishCompare =
+      previousCompareRunningState.current && !compare.isRunning;
+    previousCompareRunningState.current = compare.isRunning;
+
+    if (!didJustFinishCompare) {
+      return;
+    }
+
+    if (globalDocs.length === 0 && sessionDocs.length === 0) {
+      return;
+    }
+
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after compare:", err),
+    );
+  }, [compare.isRunning, globalDocs.length, refreshDocs, sessionDocs.length]);
+
+  const handleGlobalUploadQueued = React.useCallback(
+    (files: File[]) => {
+      setPendingGlobalDocs((prev) => [
+        ...files.map((file, index) => ({
+          clientId: `pending-global-${file.name}-${file.lastModified}-${index}`,
+          filename: file.name,
+          queuedAt: Date.now(),
+          tier: chat.currentTier,
+        })),
+        ...prev,
+      ]);
+
+      void (async () => {
+        try {
+          for (const file of files) {
+            await api.uploadDoc(file, "global", "", chat.currentTier);
+          }
+          await refreshDocs();
+        } catch (err) {
+          console.error("Failed to upload global docs:", err);
+          await refreshDocs();
+          alert("Failed to upload global document(s).");
+        }
+      })();
+    },
+    [chat.currentTier, refreshDocs],
+  );
+
+  const visibleGlobalDocs = React.useMemo(() => {
+    const placeholders = pendingGlobalDocs
+      .filter(
+        (entry) =>
+          Date.now() - entry.queuedAt < PENDING_GLOBAL_DOC_TTL_MS &&
+          !globalDocs.some((doc) => doc.filename === entry.filename),
+      )
+      .map((entry) => ({
+        doc_id: entry.clientId,
+        filename: entry.filename,
+        scope: "global" as const,
+        session_id: "",
+        current_visibility: "visible" as const,
+        tier_states: {
+          starter: {
+            status: entry.tier === "starter" ? ("processing" as const) : ("queued" as const),
+            chunks: 0,
+          },
+          plus: {
+            status: entry.tier === "plus" ? ("processing" as const) : ("queued" as const),
+            chunks: 0,
+          },
+          enterprise: {
+            status: entry.tier === "enterprise" ? ("processing" as const) : ("queued" as const),
+            chunks: 0,
+          },
+          modern: {
+            status: entry.tier === "modern" ? ("processing" as const) : ("queued" as const),
+            chunks: 0,
+          },
+        },
+        source_status: "persisted" as const,
+      }));
+    return [...placeholders, ...globalDocs];
+  }, [globalDocs, pendingGlobalDocs]);
 
   const handleDocRemoved = async (docId: string) => {
     try {
-      await fetch(`/api/docs/${docId}`, { method: "DELETE" });
-      setGlobalDocs((prev) => prev.filter((d) => d.doc_id !== docId));
-      setSessionDocs((prev) => prev.filter((d) => d.doc_id !== docId));
+      await api.deleteDoc(docId);
+      await refreshDocs();
     } catch (err) {
       console.error("Failed to remove doc:", err);
+      alert("Failed to delete document.");
     }
   };
 
@@ -192,36 +401,51 @@ function App() {
     }
   };
 
-  const handleSendMessage = async (msg: string) => {
-    if (stagedFiles.length > 0) {
-      setIsSending(true);
-      try {
-        await Promise.all(
-          stagedFiles.map(async (file) => {
-            const result = await api.uploadDoc(file, "session", chat.sessionId);
-            handleDocUploaded({
-              doc_id: result.doc_id,
-              filename: result.filename,
-              chunks: result.chunks,
-              scope: "session",
-            });
-          }),
-        );
-        setStagedFiles([]);
-        // Wait, I should not clear isSending right away to avoid flicker
-        // before chat.isStreaming takes over, but setting it false is fine because it will quickly be followed by message dispatch
-        setIsSending(false);
-      } catch (err) {
-        console.error("Upload failed before sending message", err);
-        alert("Failed to upload attached files. Message not sent.");
-        setIsSending(false);
-        return;
-      }
+  const uploadStagedSessionFiles = React.useCallback(async () => {
+    if (stagedFiles.length === 0) {
+      return true;
     }
-    chat.sendMessage(msg, chat.currentModel);
+
+    setIsSending(true);
+    try {
+      await Promise.all(
+        stagedFiles.map(async (file) => {
+          await api.uploadDoc(file, "session", chat.sessionId, chat.currentTier);
+        }),
+      );
+      setStagedFiles([]);
+      await refreshDocs();
+      return true;
+    } catch (err) {
+      console.error("Upload failed before sending message", err);
+      alert("Failed to upload attached files. Message not sent.");
+      return false;
+    } finally {
+      setIsSending(false);
+    }
+  }, [chat.currentTier, chat.sessionId, refreshDocs, stagedFiles]);
+
+  const handleSendMessage = async (msg: string) => {
+    const uploadsSucceeded = await uploadStagedSessionFiles();
+    if (!uploadsSucceeded) {
+      return;
+    }
+    await chat.sendMessage(msg, chat.currentModel);
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after sending message", err),
+    );
   };
 
-  const totalDocs = globalDocs.length + sessionDocs.length;
+  const handleRunCompare = async (msg: string) => {
+    const uploadsSucceeded = await uploadStagedSessionFiles();
+    if (!uploadsSucceeded) {
+      return;
+    }
+    await compare.runCompare(msg);
+    void refreshDocs().catch((err) =>
+      console.error("Failed to refresh docs after compare request", err),
+    );
+  };
 
   return (
     <TooltipProvider>
@@ -238,7 +462,7 @@ function App() {
           onSelectSession={chat.loadSession}
           onDeleteSession={handleDeleteSession}
           onToggleDrawer={ui.toggleDrawer}
-          totalDocs={totalDocs}
+          totalDocs={visibleGlobalDocs.length + sessionDocs.length}
           onDocsClick={() => ui.setDocsDrawerOpen(!ui.isDocsDrawerOpen)}
           isComparePage={isComparePage}
         />
@@ -256,10 +480,10 @@ function App() {
                 <div className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white/50 px-3 text-xs font-semibold text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-800/50 dark:text-zinc-300">
                   <span
                     className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: TIERS[chat.currentTier].color }}
+                    style={{ backgroundColor: tiers[chat.currentTier].color }}
                   />
                   <span className="tracking-wide">
-                    {TIERS[chat.currentTier].name}
+                    {tiers[chat.currentTier].name}
                   </span>
                 </div>
               )}
@@ -306,8 +530,11 @@ function App() {
               tierResults={compare.tierResults}
               selectedTiers={compare.selectedTiers}
               onSelectedTiersChange={compare.setSelectedTiers}
-              onRunCompare={handleSendMessage}
+              onRunCompare={handleRunCompare}
               isRunning={compare.isRunning || isSending}
+              models={chat.availableModels}
+              currentModel={chat.currentModel}
+              onModelChange={chat.setCurrentModel}
               stagedFiles={stagedFiles}
               onAttach={() => ui.openUploadModal("session")}
               onRemoveStagedFile={(idx) =>
@@ -361,20 +588,29 @@ function App() {
           evalResult={lastAssistant?.evalResult}
         />
 
-        <DocsDrawer
-          open={ui.isDocsDrawerOpen}
-          onOpenChange={ui.setDocsDrawerOpen}
-          globalDocs={globalDocs}
-          sessionDocs={sessionDocs}
-          onDocRemoved={handleDocRemoved}
-        />
+              <DocsDrawer
+                open={ui.isDocsDrawerOpen}
+                onOpenChange={ui.setDocsDrawerOpen}
+                globalDocs={visibleGlobalDocs}
+                sessionDocs={sessionDocs}
+                currentTier={chat.currentTier}
+                onDocRemoved={handleDocRemoved}
+              />
 
-        <UploadModal
-          globalDocs={globalDocs}
-          sessionDocs={sessionDocs}
-          onDocUploaded={handleDocUploaded}
-          onDocRemoved={handleDocRemoved}
-        />
+              <UploadModal
+                onStageSessionFiles={(files) =>
+                  setStagedFiles((prev) => {
+                    const existingKeys = new Set(
+                      prev.map((file) => `${file.name}-${file.size}`),
+                    );
+                    const uniqueNew = files.filter(
+                      (file) => !existingKeys.has(`${file.name}-${file.size}`),
+                    );
+                    return [...prev, ...uniqueNew];
+                  })
+                }
+                onGlobalUploadQueued={handleGlobalUploadQueued}
+              />
       </div>
     </TooltipProvider>
   );

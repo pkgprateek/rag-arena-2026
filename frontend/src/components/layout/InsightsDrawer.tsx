@@ -7,7 +7,8 @@ import {
     SheetTitle,
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
-import { TIERS, METRIC_LABELS } from "@/lib/constants";
+import { METRIC_LABELS } from "@/lib/constants";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import type { Metrics, EvalResult, Tier } from "@/types";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +35,8 @@ export function InsightsDrawer({
     metrics,
     evalResult,
 }: InsightsDrawerProps) {
-    const tierConfig = TIERS[currentTier];
+    const { tiers } = useTierCatalog();
+    const tierConfig = tiers[currentTier];
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
@@ -101,9 +103,20 @@ export function InsightsDrawer({
                                     label="Cache"
                                     value={metrics.cache_hit ? "Hit" : "Miss"}
                                 />
+                                <MetricTile
+                                    icon={TrendingUp}
+                                    label="Docs"
+                                    value={`${metrics.unique_docs_used}`}
+                                />
                             </div>
 
                             <div className="space-y-2">
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-slate-500 dark:text-zinc-500">Retrieval Mode</span>
+                                    <span className="font-mono text-slate-600 dark:text-zinc-400 tabular-nums">
+                                        {metrics.retrieval_mode}
+                                    </span>
+                                </div>
                                 <div className="flex justify-between text-xs">
                                     <span className="text-slate-500 dark:text-zinc-500">Retrieval</span>
                                     <span className="font-mono text-slate-600 dark:text-zinc-400 tabular-nums">

@@ -1,6 +1,6 @@
 """RAG Arena 2026 — LangExtract: LLM-based metadata extraction.
 
-Tier 3+: Enriches each chunk with LLM-generated metadata:
+Used by the Modern tier to enrich chunks with LLM-generated metadata:
   - title: Short descriptive title for the chunk
   - summary: 1-2 sentence summary
   - keywords: 3-5 relevant keywords
@@ -19,24 +19,17 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.db.database import AsyncSessionLocal
 from app.services.ingestion.chunkers import Chunk
+from app.services.openrouter import (
+    OPENROUTER_BASE_URL,
+    build_chat_payload,
+    normalize_model_spec,
+    openrouter_headers,
+)
+from app.services.runtime_models import get_model_for_capability
 
 logger = logging.getLogger(__name__)
-
-# Provider routing — mirrors pipeline.py _parse_provider / _get_api_config exactly
-# Format: 'provider/model-name' where model-name may itself contain slashes
-# e.g. 'groq/llama-3.3-70b-versatile' or 'openrouter/google/gemini-flash-1.5'
-_PROVIDER_BASE_URLS = {
-    "groq": "https://api.groq.com/openai/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "google": "https://generativelanguage.googleapis.com/v1beta/openai",
-}
-
-_PROVIDER_KEY_ATTRS = {
-    "groq": "groq_api_key",
-    "openrouter": "openrouter_api_key",
-    "google": "google_ai_studio_api_key",
-}
 
 _EXTRACTION_PROMPT = """You are a metadata extractor for a RAG system. Given a text chunk from a document, extract structured metadata.
 
@@ -52,38 +45,32 @@ Return ONLY a JSON object with these fields:
 Output ONLY valid JSON, no other text:"""
 
 
-def _get_langextract_config() -> tuple[str, str, dict[str, str]] | None:
-    """Resolve provider, model name, and API config from LANGEXTRACT_MODEL.
+def _get_langextract_config() -> tuple[str, dict[str, Any] | None] | None:
+    if not settings.openrouter_api_key:
+        logger.warning("LangExtract: no OpenRouter API key configured.")
+        return None
 
-    Format: 'provider/model-name' — provider is the first path segment.
-    Examples:
-      'groq/llama-3.3-70b-versatile'       → provider=groq
-      'openrouter/google/gemini-flash-1.5'  → provider=openrouter, model=google/gemini-flash-1.5
-      'google/gemini-2.0-flash'             → provider=google
-    """
-    model_spec = settings.langextract_model
+    runtime_model = None
+    try:
+        import asyncio
+
+        async def _load_runtime_model():
+            async with AsyncSessionLocal() as session:
+                return await get_model_for_capability(session, "langextract")
+
+        runtime_model = asyncio.run(_load_runtime_model())
+    except RuntimeError:
+        runtime_model = None
+    except Exception as exc:
+        logger.warning("LangExtract: failed to resolve runtime model: %s", exc)
+
+    if runtime_model is not None:
+        return runtime_model.model_slug, runtime_model.provider_preferences
+
+    model_spec = normalize_model_spec(settings.langextract_model)
     if not model_spec:
         return None
-
-    if "/" in model_spec:
-        provider, model = model_spec.split("/", 1)
-        provider = provider.lower()
-    else:
-        provider, model = "groq", model_spec
-
-    base_url = _PROVIDER_BASE_URLS.get(provider)
-    key_attr = _PROVIDER_KEY_ATTRS.get(provider)
-
-    if not base_url or not key_attr:
-        logger.warning(f"LangExtract: unknown provider '{provider}'")
-        return None
-
-    api_key = getattr(settings, key_attr, "")
-    if not api_key:
-        logger.warning(f"LangExtract: no API key for provider '{provider}'")
-        return None
-
-    return provider, model, {"base_url": base_url, "api_key": api_key}
+    return model_spec, None
 
 
 def _extract_heuristic(chunk: Chunk) -> dict[str, Any]:
@@ -107,7 +94,7 @@ def _extract_heuristic(chunk: Chunk) -> dict[str, Any]:
 
 
 def _extract_via_llm(
-    chunk_text: str, model: str, api_config: dict[str, str]
+    chunk_text: str, model: str, provider_preferences: Any | None
 ) -> dict[str, Any] | None:
     """Call LLM to extract metadata. Returns None on failure."""
     prompt = _EXTRACTION_PROMPT.format(chunk_text=chunk_text[:1500])
@@ -115,23 +102,21 @@ def _extract_via_llm(
     try:
         with httpx.Client(timeout=20.0) as client:
             response = client.post(
-                f"{api_config['base_url']}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_config['api_key']}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [
+                f"{OPENROUTER_BASE_URL}/chat/completions",
+                headers=openrouter_headers(),
+                json=build_chat_payload(
+                    model_slug=model,
+                    provider_preferences=provider_preferences,
+                    messages=[
                         {
                             "role": "system",
                             "content": "You extract document metadata. Output ONLY valid JSON.",
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    "temperature": 0.0,
-                    "max_tokens": 300,
-                },
+                    temperature=0.0,
+                    max_tokens=300,
+                ),
             )
             response.raise_for_status()
             data = response.json()
@@ -173,12 +158,12 @@ def enrich_chunks(chunks: list[Chunk]) -> list[Chunk]:
             chunk.metadata["is_enriched"] = True
         return chunks
 
-    _provider, model, api_config = config
+    model, provider_preferences = config
     success_count = 0
     fallback_count = 0
 
     for chunk in chunks:
-        extracted = _extract_via_llm(chunk.content, model, api_config)
+        extracted = _extract_via_llm(chunk.content, model, provider_preferences)
 
         if extracted is not None:
             chunk.metadata.update(extracted)

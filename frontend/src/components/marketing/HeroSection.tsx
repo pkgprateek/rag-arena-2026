@@ -22,7 +22,7 @@ export function HeroSection({ onAnalyze, onCompare }: HeroSectionProps) {
           Experience intelligent retrieval.
         </h1>
         <p className="mx-auto max-w-[600px] text-base leading-relaxed text-slate-500 dark:text-zinc-400">
-          Ask a prompt below to see how our proprietary retrieval architectures leverage hybrid search, contextual reranking, and semantic caching to deliver unparalleled accuracy.
+          Ask a question on your corpus, then compare the ladder from credible Starter RAG to document-native Modern retrieval.
         </p>
       </div>
 

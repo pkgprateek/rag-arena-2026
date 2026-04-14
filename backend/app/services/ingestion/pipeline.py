@@ -1,21 +1,17 @@
 """RAG Arena 2026 — Ingestion Orchestration.
 
-Routes documents through tier-appropriate parsing → chunking → enrichment.
+Routes documents through the canonical tier profile:
+basic -> richer semantic -> production semantic -> document-native enriched.
 
-Tier ingestion costs (external APIs):
-  STARTER:    FREE — local pypdf + fixed chunking, no external calls
-  PLUS:       Unstructured API (layout parse) + local semantic chunking
-  ENTERPRISE: Unstructured API + local semantic chunking + LangExtract (LLM per chunk)
-  MODERN:     Unstructured API + layout-preserving chunks + LangExtract (LLM per chunk)
-
-DESIGN: Ingestion is LAZY — only Tier 1 (STARTER) runs on upload. Higher tiers
-run the first time a query arrives for that tier, triggered by run_pipeline().
+DESIGN: only STARTER is ingested on upload. Higher tiers are indexed lazily on
+first query so richer parsing and enrichment follow the actual selected tier.
 """
 
 import logging
 
 from app.models import Tier
-from app.services.ingestion.parsers import parse_basic, parse_layout_aware
+from app.tier_profiles import get_tier_runtime_profile
+from app.services.ingestion.parsers import parse_for_tier
 from app.services.ingestion.chunkers import (
     chunk_fixed_size,
     chunk_semantic,
@@ -30,41 +26,22 @@ logger = logging.getLogger(__name__)
 async def ingest_document(
     file_bytes: bytes, filename: str, ext: str, doc_id: str, tier: Tier
 ) -> list[Chunk]:
-    """Process a document end-to-end based on the Tier's quality promises.
+    """Process a document end-to-end based on the tier profile."""
+    profile = get_tier_runtime_profile(tier)
+    elements = parse_for_tier(file_bytes, filename, ext)
 
-    External API usage:
-      - STARTER:    None (pure local)
-      - PLUS:       Unstructured API (layout parse) if key configured, else basic
-      - ENTERPRISE: Unstructured API + LangExtract LLM (1 call per chunk)
-      - MODERN:     Unstructured API + LangExtract LLM (1 call per chunk)
-    """
-
-    if tier == Tier.STARTER:
-        # STARTER: Basic pypdf/docx parse + fixed-size chunking — ZERO external APIs
-        elements = parse_basic(file_bytes, filename, ext)
+    if profile.chunk_mode == "basic_chunking":
         return chunk_fixed_size(elements, doc_id=doc_id)
 
-    elif tier == Tier.PLUS:
-        # PLUS: Layout-aware parse (Unstructured API if configured) + semantic chunking
-        elements = parse_layout_aware(file_bytes, filename, ext)
+    if profile.chunk_mode in {
+        "semantic_structure_chunking",
+        "semantic_production_chunking",
+    }:
         return await chunk_semantic(elements, doc_id=doc_id)
 
-    elif tier == Tier.ENTERPRISE:
-        # ENTERPRISE: The production-proven stack (2025-2026).
-        # Layout-aware parse + semantic chunks + NO LangExtract.
-        # Fast and accurate without per-chunk LLM calls.
-        # LLM enrichment happens at query time (reranking + structured evals).
-        elements = parse_layout_aware(file_bytes, filename, ext)
-        return await chunk_semantic(elements, doc_id=doc_id)
-
-    elif tier == Tier.MODERN:
-        # MODERN: Bleeding-edge 2025-2026 concepts.
-        # Layout-preserving chunks (PageIndex-style) + LangExtract LLM metadata
-        # enrichment per chunk (title, summary, keywords, questions_answered).
-        elements = parse_layout_aware(file_bytes, filename, ext)
+    if profile.chunk_mode == "page_aware_enriched_chunking":
         chunks = chunk_layout_aware(elements, doc_id=doc_id)
-        return enrich_chunks(chunks)  # LangExtract: 1 LLM call per chunk
+        return enrich_chunks(chunks) if profile.use_enrichment else chunks
 
-    # Unreachable if all Tier values handled above
-    logger.error("Unknown tier '%s' — returning empty chunk list", tier)
+    logger.error("Unknown chunk mode '%s' for tier '%s'", profile.chunk_mode, tier)
     return []

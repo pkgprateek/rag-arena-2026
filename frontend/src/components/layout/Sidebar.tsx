@@ -22,8 +22,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import { useUIStore } from "@/stores/uiStore";
-import { TIERS, TIER_ORDER } from "@/lib/constants";
 import type { Tier } from "@/types";
 
 interface SidebarSession {
@@ -61,6 +61,7 @@ export function Sidebar({
   isComparePage,
 }: SidebarProps) {
   const ui = useUIStore();
+  const { tiers, tierOrder } = useTierCatalog();
 
   return (
     <div
@@ -138,7 +139,7 @@ export function Sidebar({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56 rounded-xl border-slate-200 bg-white p-1.5 shadow-xl dark:border-white/[0.08] dark:bg-zinc-900">
-              {TIER_ORDER.map((tier) => (
+              {tierOrder.map((tier) => (
                 <DropdownMenuItem
                   key={tier}
                   onClick={() => onNewChatWithTier(tier)}
@@ -147,9 +148,9 @@ export function Sidebar({
                   <span className="flex items-center gap-2.5">
                     <span
                       className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: TIERS[tier].color }}
+                      style={{ backgroundColor: tiers[tier].color }}
                     />
-                    {TIERS[tier].name}
+                    {tiers[tier].name}
                   </span>
                 </DropdownMenuItem>
               ))}
@@ -225,11 +226,19 @@ export function Sidebar({
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-0 mt-3">
+          {!ui.isSidebarCollapsed && (
+            <div className="px-2 pb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-600">
+                History
+              </p>
+            </div>
+          )}
           {sessions.slice(0, 8).map((session) => (
             <Tooltip key={session.id}>
               <TooltipTrigger asChild>
                 <div
                   className={`
+                                        group
                                         w-full rounded-md px-2 py-1.5 text-xs transition-all
                                         ${session.id === currentSessionId
                       ? "bg-slate-200/50 text-slate-900 dark:bg-white/10 dark:text-zinc-100"

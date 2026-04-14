@@ -5,9 +5,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _utcnow() -> datetime:
@@ -24,12 +24,12 @@ def _uuid() -> str:
 
 
 class Tier(str, Enum):
-    """RAG quality tier — controls ingestion pipeline and generation params.
+    """RAG tier taxonomy used across ingestion, retrieval, and UI copy.
 
-    STARTER:    basic parsing + fixed chunking + dense retrieval (simple RAG)
-    PLUS:       Unstructured parsing + semantic chunking + hybrid retrieval
-    ENTERPRISE: deep hybrid retrieval + BGE reranking + semantic cache
-    MODERN:     layout/page-aware chunks + LangExtract enrichment + boost-aware retrieval
+    STARTER:    credible baseline for multi-doc RAG with citations
+    PLUS:       biggest visible answer-quality jump for most buyers
+    ENTERPRISE: production-grade retrieval reasoning and predictability
+    MODERN:     enterprise core plus document-native, adaptive retrieval
     """
 
     STARTER = "starter"
@@ -43,6 +43,14 @@ class DocScope(str, Enum):
 
     GLOBAL = "global"  # Available to all chat sessions
     SESSION = "session"  # Only available within the uploading session
+
+
+class DocTierState(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
+    DELETED = "deleted"
 
 
 class RunStatus(str, Enum):
@@ -68,13 +76,27 @@ class Role(str, Enum):
 class Citation(BaseModel):
     doc_id: str = ""
     page: int = 0
+    section: str = ""
     snippet: str = ""
     score: float = 0.0
 
 
 class Trace(BaseModel):
     retrieval_docs: list[str] = Field(default_factory=list)
+    parse_mode: str = ""
+    chunk_mode: str = ""
     rerank_deltas: list[float] = Field(default_factory=list)
+    retrieval_mode: str = ""
+    grounding_mode: str = ""
+    optimization_mode: str = ""
+    hybrid_used: bool = False
+    rerank_used: bool = False
+    query_orchestration_used: bool = False
+    diversity_control_used: bool = False
+    cache_hit: bool = False
+    enrichment_used: bool = False
+    page_aware_used: bool = False
+    unique_docs_used: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     timings: dict[str, float] = Field(default_factory=dict)
@@ -101,6 +123,38 @@ class Run(BaseModel):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class TierProfile(BaseModel):
+    id: Tier
+    market_position: str
+    parse_mode: str
+    chunk_mode: str
+    retrieval_mode: str
+    grounding_mode: str
+    optimization_mode: str
+    ui_summary: str
+
+
+class TierRuntimeProfile(TierProfile):
+    eval_trust_mode: str
+    generation_temperature: float = 0.3
+    generation_max_tokens: int = 1024
+    use_hybrid: bool = False
+    use_rerank: bool = False
+    use_query_orchestration: bool = False
+    use_diversity_control: bool = False
+    use_semantic_cache: bool = False
+    use_enrichment: bool = False
+    use_page_aware: bool = False
+    use_adaptive_retrieval: bool = False
+    strict_grounding: bool = False
+    dense_top_k: int = 5
+    sparse_top_k: int = 0
+    candidate_pool_k: int = 5
+    final_top_k: int = 5
+    per_doc_limit: int = 5
+    system_prompt: str = ""
+
+
 class Message(BaseModel):
     id: str = Field(default_factory=_uuid)
     role: Role = Role.USER
@@ -124,6 +178,106 @@ class CompareRun(BaseModel):
     run_ids: list[str] = Field(default_factory=list)
     status: RunStatus = RunStatus.QUEUED
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class ProviderPreferences(BaseModel):
+    order: list[str] = Field(default_factory=list)
+    allow_fallbacks: bool = True
+    require_parameters: bool = True
+    zdr: bool | None = None
+    only: list[str] = Field(default_factory=list)
+    ignore: list[str] = Field(default_factory=list)
+    sort: str | None = None
+    max_price: dict[str, int] | None = None
+
+
+class RuntimeModelConfig(BaseModel):
+    id: str
+    model_slug: str
+    display_name: str
+    is_enabled: bool = True
+    is_default: bool = False
+    supports_chat: bool = True
+    supports_eval: bool = True
+    supports_langextract: bool = False
+    supports_embeddings: bool = False
+    provider_preferences: ProviderPreferences = Field(
+        default_factory=ProviderPreferences
+    )
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    @property
+    def public_model_name(self) -> str:
+        return self.model_slug
+
+
+class CreateRuntimeModelRequest(BaseModel):
+    model_slug: str = Field(min_length=1)
+    display_name: str = Field(min_length=1, max_length=120)
+    is_enabled: bool = True
+    is_default: bool = False
+    supports_chat: bool = True
+    supports_eval: bool = True
+    supports_langextract: bool = False
+    supports_embeddings: bool = False
+    provider_preferences: ProviderPreferences = Field(
+        default_factory=ProviderPreferences
+    )
+
+
+class UpdateRuntimeModelRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_enabled: bool | None = None
+    is_default: bool | None = None
+    supports_chat: bool | None = None
+    supports_eval: bool | None = None
+    supports_langextract: bool | None = None
+    supports_embeddings: bool | None = None
+    provider_preferences: ProviderPreferences | None = None
+
+
+class RuntimeModelsResponse(BaseModel):
+    models: list[RuntimeModelConfig] = Field(default_factory=list)
+
+
+class RuntimeAppSettings(BaseModel):
+    default_chat_model_slug: str
+    semantic_cache_enabled: bool
+    semantic_cache_ttl: int = Field(ge=0)
+    semantic_cache_threshold: float = Field(ge=0.0, le=1.0)
+    calcom_link: str
+    embedding_model: str
+    reranker_model: str
+    langextract_model: str
+    reranker_backend: Literal["local_llamacpp"] | None = "local_llamacpp"
+
+
+class UpdateRuntimeAppSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    default_chat_model_slug: str | None = None
+    semantic_cache_enabled: bool | None = None
+    semantic_cache_ttl: int | None = Field(default=None, ge=0)
+    semantic_cache_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    calcom_link: str | None = None
+
+    @field_validator("default_chat_model_slug")
+    @classmethod
+    def strip_non_empty_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Value cannot be empty")
+        return stripped
+
+    @field_validator("calcom_link")
+    @classmethod
+    def strip_optional_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -163,3 +317,36 @@ class StreamEvent(BaseModel):
     run_id: str = ""
     tier: Optional[Tier] = None
     data: dict | str | list = ""
+
+
+class DocTierStateInfo(BaseModel):
+    status: DocTierState
+    chunks: int = 0
+    error: str | None = None
+
+
+class DocListItem(BaseModel):
+    doc_id: str
+    filename: str
+    scope: DocScope
+    session_id: str = ""
+    current_visibility: Literal["visible", "hidden"] = "visible"
+    tier_states: dict[Tier, DocTierStateInfo] = Field(default_factory=dict)
+    source_status: Literal["persisted", "deleted"] = "persisted"
+
+
+class DocsListResponse(BaseModel):
+    documents: list[DocListItem] = Field(default_factory=list)
+    store_stats: dict[str, Any] = Field(default_factory=dict)
+
+
+class DocUploadResponse(BaseModel):
+    doc_id: str
+    filename: str
+    chunks: int = 0
+    scope: DocScope
+    session_id: str = ""
+    status: str
+    indexed_tiers: list[str] = Field(default_factory=list)
+    tier_states: dict[Tier, DocTierStateInfo] = Field(default_factory=dict)
+    store_stats: dict[str, Any] = Field(default_factory=dict)

@@ -71,7 +71,7 @@ export function useChat() {
       // Per-prompt model selection: use override if provided, fall back to store default
       const model = modelOverride || store.currentModel;
       if (!model) {
-        alert("No model selected. Configure AVAILABLE_MODELS in .env");
+        alert("No model selected. Add one in Settings.");
         return;
       }
 
@@ -176,6 +176,7 @@ export function useChat() {
     currentModel: store.currentModel,
     availableModels: store.availableModels,
     hasInteracted: store.hasInteracted,
+    isHydrated: store.isHydrated,
     sessionId: store.sessionId,
     sendMessage,
     loadSession,

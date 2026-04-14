@@ -49,7 +49,7 @@ async def cache_lookup(
 
     Returns the cached entry dict on hit, None on miss.
     """
-    if settings.semantic_cache_ttl <= 0:
+    if not settings.semantic_cache_enabled or settings.semantic_cache_ttl <= 0:
         return None  # Cache disabled
 
     embedder = get_embedder()
@@ -115,7 +115,7 @@ async def cache_store(
     cost_estimate: float = 0.0,
 ) -> None:
     """Store a query→answer pair in the semantic cache."""
-    if settings.semantic_cache_ttl <= 0:
+    if not settings.semantic_cache_enabled or settings.semantic_cache_ttl <= 0:
         return  # Cache disabled
 
     embedder = get_embedder()

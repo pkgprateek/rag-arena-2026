@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
-from app.config import settings
 from app.models import (
     ChatSendRequest,
     ChatSendResponse,
@@ -21,6 +20,8 @@ from app.redis_client import get_redis
 from app.services.pipeline import run_pipeline
 from app.db.database import get_db
 from app.db.models import DBSession, DBMessage
+from app.services.runtime_models import resolve_chat_model
+from app.services.retrieval_v2.store import store as vector_store
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -91,6 +92,15 @@ async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)) ->
     if not db_session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    deleted_docs = await vector_store.delete_session_documents(session_id)
+    for tracked in deleted_docs:
+        try:
+            from pathlib import Path
+
+            Path(tracked.source_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
     await db.execute(delete(DBMessage).where(DBMessage.session_id == session_id))
     await db.execute(delete(DBSession).where(DBSession.id == session_id))
     await db.commit()
@@ -115,19 +125,8 @@ async def chat_send(
         )
 
     # Resolve and validate model
-    model = req.model or settings.get_default_model()
-    if not model:
-        raise HTTPException(
-            status_code=400,
-            detail="No model configured. Set AVAILABLE_MODELS in .env",
-        )
-
-    available = settings.get_available_models()
-    if available and model not in available:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model}' is not available. Options: {available}",
-        )
+    selection = await resolve_chat_model(db, req.model)
+    model = selection.public_name
 
     # Ensure session exists in DB
     db_session = await db.get(DBSession, req.session_id)
@@ -159,6 +158,8 @@ async def chat_send(
     # Store session message reference (1h TTL) for redis
     await r.rpush(f"session:{req.session_id}:messages", user_msg.model_dump_json())
     await r.expire(f"session:{req.session_id}:messages", 3600)
+
+    await vector_store.start_session_ingestion_for_tier(req.session_id, req.tier)
 
     asyncio.create_task(
         run_pipeline(

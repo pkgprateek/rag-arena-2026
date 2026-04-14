@@ -30,14 +30,14 @@ Different retrieval strategies offer different tradeoffs:
 ### Basic Vector Search (Baseline)
 Simple cosine similarity search. Fast but can miss semantically related content that uses different vocabulary.
 
-### Hybrid Search (Value Tier)
+### Hybrid Search (Plus Tier)
 Combines vector similarity with keyword (BM25/TF-IDF) search. Catches both semantic and lexical matches. Typically improves recall by 15-30%.
 
 ### Re-ranking (Enterprise Tier)
 Uses a cross-encoder model to re-rank the initial retrieval results. More computationally expensive but significantly improves precision. Can improve accuracy by 20-40% on complex queries.
 
-### Advanced Retrieval (Experimental)
-Techniques like HyDE (Hypothetical Document Embeddings), multi-hop retrieval, and query decomposition. These break complex questions into sub-queries, retrieve documents for each, and synthesize answers across multiple retrieval passes.
+### Document-Native Retrieval (Modern Tier)
+Techniques like page-aware indexing, metadata enrichment, and adaptive retrieval use document structure directly instead of flattening everything into generic chunks.
 
 ## Cost Considerations
 RAG systems have several cost components:
@@ -48,10 +48,10 @@ RAG systems have several cost components:
 
 ## Quality-Cost Tradeoff
 The fundamental insight of modern RAG systems is the tradeoff between quality and cost:
-- **Baseline**: Cheap and fast, but lower accuracy. Good for general questions.
-- **Value**: Moderate cost, significantly better accuracy. Suitable for most production use cases.
-- **Enterprise**: Higher cost, highest accuracy. Required for regulated industries, legal, medical.
-- **Experimental**: Variable cost, pushes the frontier. For teams exploring next-generation approaches.
+- **Starter**: Cheap and credible, but weaker on messy structure and cross-document balance.
+- **Plus**: Moderate cost, biggest answer-quality jump for most real teams.
+- **Enterprise**: Higher cost, stronger predictability, grounding, and operational trust.
+- **Modern**: Enterprise-grade core plus newer document-native methods that are already serious, but not yet universal.
 
 ## Common Failure Modes
 1. **Hallucination**: The LLM generates plausible-sounding but incorrect information not supported by the context.

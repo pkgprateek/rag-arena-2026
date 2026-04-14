@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
-import { TIERS } from "@/lib/constants";
+import { useTierCatalog } from "@/hooks/useTierCatalog";
 import type { Message } from "@/types";
 import { Sparkles } from "lucide-react";
 
@@ -12,7 +12,8 @@ interface ChatMessageProps {
 
 export function ChatMessage({ message }: ChatMessageProps) {
     const isUser = message.role === "user";
-    const tierConfig = message.tier ? TIERS[message.tier] : null;
+    const { tiers } = useTierCatalog();
+    const tierConfig = message.tier ? tiers[message.tier] : null;
 
     const [displayedContent, setDisplayedContent] = useState("");
 
